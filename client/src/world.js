@@ -404,7 +404,7 @@ export class World {
     });
   }
 
-  update(dt) {
+  update(dt, camPos) {
     this.time += dt;
     const t = this.time;
     // chaos lighting transitions
@@ -440,7 +440,8 @@ export class World {
       const target = it.avail ? 1 : 0;
       it.s += (target - it.s) * Math.min(1, dt * (target ? 8 : 14));
       const pop = it.avail ? 1 + Math.sin(Math.min(1, it.s) * Math.PI) * 0.3 : 1;
-      it.mesh.visible = it.s > 0.02;
+      // hide boxes right in front of the lens (they'd fill the screen)
+      it.mesh.visible = it.s > 0.02 && !(camPos && it.mesh.position.distanceToSquared(camPos) < 4);
       it.mesh.scale.setScalar(Math.max(0.001, it.s * pop));
       it.mesh.position.y = it.p[1] + 1 + Math.sin(t * 2.4 + it.phase) * 0.18;
       it.mesh.rotation.set(Math.sin(t * 1.3 + it.phase) * 0.25, t * 1.6 + it.phase, 0);

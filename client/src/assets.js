@@ -68,11 +68,12 @@ export function makeCharacter(color) {
 
   const mixer = new THREE.AnimationMixer(model);
   const actions = {};
+  const oneShot = new Set(cfg.oneShotClips || ['hit', 'punch']);
   for (const [key, clipName] of Object.entries(cfg.clips || {})) {
     const clip = clipName && THREE.AnimationClip.findByName(assets.character.animations, clipName);
     if (!clip) continue;
     const action = mixer.clipAction(clip);
-    if (key === 'jump' || key === 'hit') {
+    if (oneShot.has(key) || oneShot.has(clipName)) {
       action.setLoop(THREE.LoopOnce, 1);
       action.clampWhenFinished = true;
     }

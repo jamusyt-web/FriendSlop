@@ -240,7 +240,9 @@ export class Mover {
     for (const b of this.boxes) {
       if (!this.overlaps(b, 0)) continue;
       const rise = b.max[1] - p.y;
-      if (canStep && rise > 0 && rise <= MOVE.stepHeight && this.vel.y <= 0 && this.fits(p.x, b.max[1], p.z)) {
+      // full steps when grounded; tiny lips (ice strips, pads) always, so we never get shoved sideways off them
+      const stepOk = (canStep && this.vel.y <= 0 && rise <= MOVE.stepHeight + 0.01) || rise <= 0.15;
+      if (rise > 0 && stepOk && this.fits(p.x, b.max[1], p.z)) {
         p.y = b.max[1];
         this.smoothY -= rise;
         continue;

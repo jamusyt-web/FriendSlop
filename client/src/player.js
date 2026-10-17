@@ -137,7 +137,7 @@ export class PlayerView {
 
     this.glow = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTex, color: 0xff2040, blending: THREE.AdditiveBlending, depthWrite: false, transparent: true }));
     this.glow.position.y = 0.95;
-    this.glow.scale.setScalar(3.4);
+    this.glow.scale.setScalar(2.8);
     this.glow.visible = false;
     this.body.add(this.glow);
 
@@ -154,7 +154,7 @@ export class PlayerView {
     // ground-anchored bits: blob shadow + IT ring
     this.ground = new THREE.Group();
     this.blob = new THREE.Mesh(blobGeo, new THREE.MeshBasicMaterial({ map: blobTex, transparent: true, depthWrite: false, opacity: 0.35, polygonOffset: true, polygonOffsetFactor: -2 }));
-    this.ring = new THREE.Mesh(ringGeo, new THREE.MeshBasicMaterial({ color: 0xff2040, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, polygonOffset: true, polygonOffsetFactor: -3 }));
+    this.ring = new THREE.Mesh(ringGeo, new THREE.MeshBasicMaterial({ color: 0xff1a3c, transparent: true, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -3 }));
     this.ring.visible = false;
     this.ground.add(this.blob, this.ring);
 
@@ -168,6 +168,7 @@ export class PlayerView {
     this.world.returnLight(this.light);
     this.char.mixer?.stopAllAction();
     for (const w of this.char.mats) w.mat.dispose();
+    for (const m of [this.bombMat, this.glow.material, this.spark.material, this.blob.material, this.ring.material]) m.dispose();
     if (this.tag) {
       this.tag.material.map.dispose();
       this.tag.material.dispose();
@@ -232,17 +233,30 @@ export class PlayerView {
   playAnim(name) {
     const actions = this.char.actions;
     const key = (ANIM_FALLBACK[name] || [name]).find((k) => actions[k]) || null;
-    if (key === this.current) return;
+    if (key === this.current && !this.restart) return;
+    this.restart = false;
     const next = key && actions[key];
     const prev = this.current && actions[this.current];
     this.current = key;
     if (!next) return;
+    if (prev === next) {
+      next.reset().play();
+      return;
+    }
     next.reset();
     next.enabled = true;
     next.setEffectiveTimeScale(1);
     next.setEffectiveWeight(1);
     next.play();
     if (prev) next.crossFadeFrom(prev, 0.15, false);
+  }
+
+  // play a one-shot clip (e.g. punch) over the current animation, then return to it
+  playOnce(name) {
+    const action = this.char.actions[name];
+    this.oneShot = name;
+    this.oneShotUntil = this.time + (action ? action.getClip().duration * 0.95 : 0.35);
+    this.restart = true; // restart even if the same clip is already showing
   }
 
   stretch(amount = 1) {
@@ -266,7 +280,7 @@ export class PlayerView {
     this.time += dt;
     const st = this.state;
     const fx = st.fx || [];
-    const frozen = fx.includes('frozen');
+    const frozen = fx.includes('frozen') && !ctx.countdown; // everyone is frozen during the countdown
     const ghost = fx.includes('ghost');
     const shield = fx.includes('shield');
     const boost = fx.includes('boost');
@@ -286,15 +300,16 @@ export class PlayerView {
     this.squash.scale.set(side, this.sq, side);
 
     // animation
-    const anim = this.forcedAnim || this.anim;
+    if (this.oneShot && this.time > this.oneShotUntil) this.oneShot = null;
+    const anim = this.forcedAnim || this.oneShot || this.anim;
     this.playAnim(anim);
     if (this.char.mixer) this.char.mixer.update(frozen ? 0 : dt * (anim === 'run' && ctx.runRate ? ctx.runRate : 1));
     if (this.char.parts) this.beanAnim(anim, frozen ? 0 : dt);
 
     // visibility: ghosts vanish for others, go translucent for yourself
     const hidden = ghost && !this.isSelf;
-    this.root.visible = !hidden;
-    this.ground.visible = !hidden;
+    this.root.visible = !hidden && (this.isSelf || !!this.placed);
+    this.ground.visible = this.root.visible;
     const targetAlpha = ghost && this.isSelf ? 0.35 : 1;
     this.ghostAlpha += (targetAlpha - this.ghostAlpha) * Math.min(1, dt * 8);
 
@@ -304,15 +319,15 @@ export class PlayerView {
     const blink = st.it ? (Math.sin(t * blinkHz * Math.PI * 2) > 0 ? 1 : 0) : 0;
     const pulse = st.it ? 0.35 + 0.25 * Math.sin(t * 8) : 0;
     this.bomb.visible = st.it;
-    this.glow.visible = st.it;
+    this.glow.visible = st.it && !this.isSelf; // your own glow would wash out the camera view
     this.ring.visible = st.it;
     if (st.it) {
       this.bomb.position.set(0, PLAYER.height + 0.55 + Math.sin(t * 5) * 0.06, 0);
       this.bomb.rotation.set(Math.sin(t * 3) * 0.2, t * 1.5, Math.sin(t * 4) * 0.2);
       this.bombMat.emissiveIntensity = blink * 2.5;
       this.spark.scale.setScalar(0.25 + Math.random() * 0.25);
-      this.glow.material.opacity = 0.35 + pulse * 0.6;
-      this.ring.material.opacity = 0.5 + 0.4 * Math.sin(t * 8);
+      this.glow.material.opacity = 0.15 + pulse * 0.45;
+      this.ring.material.opacity = 0.55 + 0.3 * Math.sin(t * 8);
       this.ring.scale.setScalar(this.scale * (1 + 0.15 * Math.sin(t * 8)));
     }
     if (this.tag) {
@@ -339,7 +354,7 @@ export class PlayerView {
     const gy = groundBelow(this.world.boxes || [], p.x, p.z, p.y + 0.1);
     const h = p.y - gy;
     if (gy > -Infinity && h < 25) {
-      this.ground.visible = !hidden;
+      this.ground.visible = this.root.visible;
       this.ground.position.set(p.x, gy + 0.02, p.z);
       this.blob.material.opacity = 0.35 * Math.max(0, 1 - h / 12);
       this.blob.scale.setScalar(this.scale * (1 - Math.min(0.5, h / 20)));
@@ -349,7 +364,7 @@ export class PlayerView {
     if (this.light) {
       this.light.position.set(p.x, p.y + 1.8 * this.scale, p.z);
       this.light.color.setHex(st.it ? 0xff3040 : this.color);
-      this.light.intensity = hidden ? 0 : ctx.darkness * (st.it ? 40 : 22);
+      this.light.intensity = hidden ? 0 : ctx.darkness * (st.it ? 26 : 13);
     }
   }
 
@@ -408,6 +423,9 @@ export class PlayerView {
     } else if (anim === 'slip') {
       rx = -0.7;
       hy = 1.0 + Math.sin(t * 25) * 0.15;
+    } else if (anim === 'punch') {
+      hz = 0.5;
+      hy = 0.95;
     } else if (anim === 'dance') {
       rz = Math.sin(t * 8) * 0.3;
       by += Math.abs(Math.sin(t * 8)) * 0.15;

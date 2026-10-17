@@ -105,7 +105,11 @@ export function initUI(handlers) {
   $('btn-start').onclick = () => on.start();
   $('btn-lobby-menu').onclick = () => on.pause();
   $('map-list').innerHTML = MAP_IDS.map(
-    (id) => `<button class="map-card" data-map="${id}" style="background:${hex(MAPS[id].sky)}">${esc(MAPS[id].name)}</button>`,
+    (id) => {
+      const c = MAPS[id].sky;
+      const dark = ((c >> 16) & 255) * 0.3 + ((c >> 8) & 255) * 0.59 + (c & 255) * 0.11 < 110;
+      return `<button class="map-card${dark ? ' dark' : ''}" data-map="${id}" style="background:${hex(c)}">${esc(MAPS[id].name)}</button>`;
+    },
   ).join('');
   $('map-list').addEventListener('click', (e) => {
     const b = e.target.closest('.map-card');
@@ -284,6 +288,10 @@ export function setItem(id) {
   }
 }
 
+export function setItemVisible(v) {
+  $('item-slot').classList.toggle('hidden', !v);
+}
+
 export function feed(html, mine = false) {
   const box = $('killfeed');
   const el = document.createElement('div');
@@ -297,7 +305,7 @@ export function feed(html, mine = false) {
 
 export function bigText(html, cls = '') {
   const box = $('big-text');
-  box.innerHTML = `<div class="big ${cls}">${html}</div>`;
+  box.innerHTML = `<div class="shout ${cls}">${html}</div>`;
 }
 
 export function chaosBadge(name, remaining, frac) {

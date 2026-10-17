@@ -161,7 +161,6 @@ export class Effects {
       opacity: sphere ? 0.35 : 0.9,
       depthWrite: false,
       side: THREE.DoubleSide,
-      blending: sphere ? THREE.NormalBlending : THREE.AdditiveBlending,
     });
     const m = new THREE.Mesh(sphere ? sphereGeo : ringGeo, mat);
     m.position.set(pos.x, pos.y + 0.08, pos.z);
