@@ -1,0 +1,42 @@
+{
+  "character": {
+    "file": "models/character.glb",
+    "scale": 1,
+    "rotationY": 0,
+    "yOffset": 0,
+    "height": 1.8,
+    "facing": "+Z",
+    "clips": {
+      "idle": "idle",
+      "run": "run",
+      "jump": "jump",
+      "fall": "fall",
+      "dive": "dive",
+      "dance": "dance",
+      "hit": "hit",
+      "punch": "punch"
+    },
+    "oneShotClips": ["punch", "hit"],
+    "tintMaterials": ["tint"]
+  },
+  "banana": {
+    "file": "models/banana.glb",
+    "scale": 1
+  },
+  "sfx": {
+    "jump": "sfx/jump.ogg",
+    "land": "sfx/land.ogg",
+    "tag": "sfx/tag.ogg",
+    "pickup": "sfx/pickup.ogg",
+    "use": "sfx/use.ogg",
+    "punch": "sfx/punch.ogg",
+    "slip": "sfx/slip.ogg",
+    "boom": "sfx/boom.ogg",
+    "beep": "sfx/beep.ogg",
+    "go": "sfx/go.ogg",
+    "whoosh": "sfx/whoosh.ogg",
+    "freeze": "sfx/freeze.ogg",
+    "bounce": "sfx/bounce.ogg",
+    "win": "sfx/win.ogg"
+  }
+}
