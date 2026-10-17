@@ -18,6 +18,9 @@ client/   index.html, src/*.js, public/assets/ (assets.json manifest, models/, s
 
 ## Rules (hot-potato tag)
 
+Phases: `lobby` → `countdown` → `play` → `results` → `lobby`.
+
+
 - Lobby: everyone spawns on the host-selected map and can run around; no tagging, items still spawn (fun warm-up). Host picks map, clicks Start (≥1 player; solo allowed for testing).
 - Countdown (COUNTDOWN s): everyone teleported to spawns and frozen. One random player becomes IT and gets the BOMB with a random fuse in BOMB_FUSE.
 - Play (ROUND_TIME s):
