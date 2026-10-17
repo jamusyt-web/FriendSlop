@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>FriendSlop</title>
+    <link rel="preload" href="/fonts/luckiest-guy.woff2" as="font" type="font/woff2" crossorigin />
+    <link rel="preload" href="/fonts/fredoka.woff2" as="font" type="font/woff2" crossorigin />
+  </head>
+  <body>
+    <canvas id="game"></canvas>
+
+    <!-- loading -->
+    <div id="loading" class="screen center">
+      <div class="logo wobble">FriendSlop</div>
+      <div class="loadbar"><i id="load-fill"></i></div>
+      <p class="sub">Loading slop…</p>
+    </div>
+
+    <!-- main menu -->
+    <div id="menu" class="screen hidden">
+      <div class="menu-card card">
+        <h1 class="title" id="title"></h1>
+        <p class="tagline">hot potato tag · but make it chaos</p>
+
+        <label class="field-label" for="name-input">Your name</label>
+        <input id="name-input" class="text-input" maxlength="16" autocomplete="off" spellcheck="false" />
+
+        <label class="field-label">Your color</label>
+        <div id="swatches" class="swatches"></div>
+
+        <button id="btn-create" class="btn big pink">Create Room</button>
+        <div class="join-row">
+          <input id="code-input" class="text-input code" maxlength="4" placeholder="CODE" autocomplete="off" spellcheck="false" />
+          <button id="btn-join" class="btn cyan">Join</button>
+        </div>
+        <button id="btn-menu-settings" class="btn ghost">⚙ Settings</button>
+      </div>
+      <div class="menu-foot">2–8 players · WASD + mouse · don't hold the bomb</div>
+    </div>
+
+    <!-- connecting -->
+    <div id="connecting" class="screen center hidden">
+      <div class="spinner"></div>
+      <p class="sub" id="connecting-text">Connecting…</p>
+      <button id="btn-cancel-connect" class="btn ghost small">Cancel</button>
+    </div>
+
+    <!-- in-game HUD -->
+    <div id="hud" class="hidden">
+      <div id="vignette"></div>
+      <div id="crosshair"></div>
+
+      <div id="hud-top">
+        <div id="timer" class="pill hidden">2:30</div>
+        <div id="fuse" class="hidden">
+          <span class="bomb-icon">💣</span>
+          <div class="fuse-bar"><i></i><b class="spark"></b></div>
+          <span class="fuse-num">0.0</span>
+        </div>
+        <div id="it-label" class="pill hidden"></div>
+        <div id="chaos-badge" class="hidden">
+          <span class="chaos-name"></span><span class="chaos-time"></span>
+          <div class="chaos-bar"><i></i></div>
+        </div>
+      </div>
+
+      <div id="score-box" class="hidden">
+        <span class="label">Score</span>
+        <span id="score">0</span>
+      </div>
+
+      <div id="killfeed"></div>
+
+      <div id="item-slot">
+        <div class="item-icon"></div>
+        <div class="item-text">
+          <div class="item-name"></div>
+          <div class="item-key"><kbd>E</kbd> / <kbd>LMB</kbd> to use</div>
+        </div>
+      </div>
+
+      <div id="it-banner" class="hidden">YOU'RE IT!</div>
+      <div id="big-text"></div>
+      <div id="lock-hint" class="hidden">🖱️ Click to play</div>
+
+      <div id="scoreboard" class="card hidden">
+        <h2>Scoreboard</h2>
+        <ol id="scoreboard-list"></ol>
+      </div>
+    </div>
+
+    <!-- lobby side panel -->
+    <div id="lobby" class="hidden">
+      <div class="lobby-panel card">
+        <div class="lobby-head">
+          <span class="field-label">Room code</span>
+          <button id="room-code" class="room-code" title="Click to copy">----</button>
+        </div>
+        <h3>Players <span id="player-count"></span></h3>
+        <ul id="player-list"></ul>
+        <h3>Map</h3>
+        <div id="map-list"></div>
+        <button id="btn-start" class="btn big pink">Start!</button>
+        <p id="wait-host" class="sub small">Waiting for the host to start…</p>
+        <button id="btn-lobby-menu" class="btn ghost small">☰ Menu</button>
+      </div>
+      <div class="controls-help card">
+        <b>WASD</b> move · <b>Space</b> jump ×2 · <b>Shift</b>/<b>RMB</b> dive · <b>E</b>/<b>LMB</b> use item · <b>Tab</b> scores · <b>Esc</b> menu
+      </div>
+    </div>
+
+    <!-- results -->
+    <div id="results" class="screen hidden">
+      <div class="results-card card">
+        <div class="results-crown">👑</div>
+        <h2 id="winner-name">Winner!</h2>
+        <ol id="results-list"></ol>
+        <p class="sub small" id="results-timer">Back to lobby soon…</p>
+      </div>
+    </div>
+
+    <!-- pause -->
+    <div id="pause" class="screen center dim hidden">
+      <div class="pause-card card">
+        <h2>Paused</h2>
+        <p class="sub small">The game keeps going — hurry!</p>
+        <button id="btn-resume" class="btn big pink">Resume</button>
+        <button id="btn-pause-settings" class="btn cyan">⚙ Settings</button>
+        <button id="btn-leave" class="btn ghost">Leave room</button>
+      </div>
+    </div>
+
+    <!-- settings -->
+    <div id="settings" class="screen center dim hidden">
+      <div class="settings-card card">
+        <h2>Settings</h2>
+        <label class="setting">
+          <span>Mouse sensitivity <em id="sens-val"></em></span>
+          <input type="range" id="set-sens" min="0.2" max="3" step="0.05" />
+        </label>
+        <label class="setting row">
+          <span>Invert Y</span>
+          <input type="checkbox" id="set-invert" class="toggle" />
+        </label>
+        <label class="setting">
+          <span>Field of view <em id="fov-val"></em></span>
+          <input type="range" id="set-fov" min="60" max="110" step="1" />
+        </label>
+        <label class="setting">
+          <span>Master volume <em id="vol-val"></em></span>
+          <input type="range" id="set-vol" min="0" max="1" step="0.01" />
+        </label>
+        <label class="setting row">
+          <span>Fullscreen</span>
+          <input type="checkbox" id="set-fullscreen" class="toggle" />
+        </label>
+        <button id="btn-settings-back" class="btn big pink">Back</button>
+      </div>
+    </div>
+
+    <div id="toasts"></div>
+
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>
