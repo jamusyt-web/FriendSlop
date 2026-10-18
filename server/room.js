@@ -290,6 +290,7 @@ class Room {
       lastHit: null, // { id, t }: who last knocked / froze / slipped us (knockoff credit)
       bonkUntil: 0, // giants can't bonk us again until then
       nextFall: 0, // falls before this time are ignored
+      boomedAt: 0, // when our bomb last went off (no fresh bomb back in the same tick)
       stats: newStats(),
     };
     this.players.set(id, pl);
@@ -666,9 +667,10 @@ class Room {
     it.score -= BOMB_PENALTY;
     it.stats.booms++;
     it.fuse = null;
+    it.boomedAt = t;
     this.knock(it, push(it.p, it.p, BOOM_KNOCK.force, BOOM_KNOCK.up)); // random sideways + up
     this.ev('boom', { id: it.id });
-    const next = pick(this.runners().filter((o) => o !== it));
+    const next = pick(this.runners().filter((o) => o !== it && o.boomedAt !== t)); // nor someone whose bomb just went off too
     if (!next) return;
     next.fuse = rand(...BOMB_FUSE);
     next.noTag = { id: it.id, until: t + NO_TAGBACK }; // the launched player is still in reach for a tick or two
@@ -766,7 +768,7 @@ class Room {
   }
 
   // Pearl landed: the thrower warps onto the floor under where it stopped (a body width back from a wall).
-  // Over the void or lava there's no safe spot, and the pearl is just lost.
+  // Over the void, on lava or close enough to touch it there's no safe spot, and the pearl is just lost.
   warp(s) {
     const pl = this.players.get(s.owner);
     if (!pl) return;
@@ -775,7 +777,12 @@ class Room {
     const [x, z] = [s.p[0] - s.v[0] * back, s.p[2] - s.v[2] * back];
     const floor = floorBelow(this.solids, x, z, s.p[1] + 0.2);
     if (!floor || floor.kind === 'lava') return;
-    const p = [x, floor.max[1], z].map(round2);
+    const y = floor.max[1];
+    const r = PLAYER.radius + 0.05; // the body's edge, a hair more than the client's lava check
+    const top = (b) => b.max[1] + Math.max(0, b.dv?.[1] ?? 0); // rising lava: where it'll be in a second
+    if (this.solids.some((b) => b.kind === 'lava' && x + r > b.min[0] && x - r < b.max[0] && z + r > b.min[2] &&
+      z - r < b.max[2] && y < top(b) + 0.05 && y + PLAYER.height > b.min[1])) return;
+    const p = [x, y, z].map(round2);
     this.teleport(pl, p);
     this.ev('warp', { id: pl.id, p });
   }

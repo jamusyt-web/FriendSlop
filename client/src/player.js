@@ -458,7 +458,7 @@ export class PlayerView {
 
     this.balloon.visible = fx.includes('float');
     if (this.balloon.visible) {
-      this.balloon.position.set(0.35 + Math.sin(t * 1.7) * 0.08, PLAYER.height + 0.75 + Math.sin(t * 2.3) * 0.08, -0.1);
+      this.balloon.position.set(0.5 + Math.sin(t * 1.7) * 0.08, PLAYER.height + 0.6 + Math.sin(t * 2.3) * 0.08, -0.1);
       this.balloon.rotation.z = Math.sin(t * 1.7) * 0.12 - 0.15;
     }
     this.stars.visible = fx.includes('dizzy');
@@ -490,7 +490,7 @@ export class PlayerView {
 
     // LIGHTS OUT personal light (handed out by world.assignLights)
     this.lightColor = st.it ? 0xff3040 : this.color;
-    this.lightIntensity = hidden ? 0 : ctx.darkness * (st.it ? 26 : 13);
+    this.lightIntensity = this.root.visible ? ctx.darkness * (st.it ? 26 : 13) : 0;
   }
 
   applyMaterials(pulse, frozen) {

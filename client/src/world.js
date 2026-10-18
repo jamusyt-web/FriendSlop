@@ -181,7 +181,7 @@ function beltGeo(w, h, d, push) {
 }
 
 const stinkShellGeo = new THREE.SphereGeometry(STINK, 28, 12, 0, Math.PI * 2, 0, Math.PI / 2);
-const stinkShellMat = new THREE.MeshBasicMaterial({ color: 0x8cff5a, transparent: true, opacity: 0.1, depthWrite: false, side: THREE.DoubleSide });
+const stinkPuffGeo = new THREE.SphereGeometry(1, 14, 10);
 
 const skyVert = /* glsl */ `
   varying vec3 vDir;
@@ -304,7 +304,7 @@ export class World {
     if (this.group) {
       this.scene.remove(this.group);
       this.group.traverse((o) => {
-        if (o.geometry && o.geometry !== this.mysteryGeo && o.geometry !== stinkShellGeo) o.geometry.dispose();
+        if (o.geometry && o.geometry !== this.mysteryGeo && o.geometry !== stinkShellGeo && o.geometry !== stinkPuffGeo) o.geometry.dispose();
       });
       for (const d of this.dynamic) for (const m of d.mats) m.dispose();
       for (const m of this.beltMats.values()) {
@@ -463,7 +463,7 @@ export class World {
     if (changed) this.solids = this.map.boxes.concat([...this.walls.values()].filter((e) => !e.dead).map((e) => e.box));
   }
 
-  // Stink clouds from snapshots: a green puffy sphere (soft sprites + faint shell) around the drop spot
+  // Stink clouds from snapshots: a green puffy ball of see-through blobs (+ faint shell showing the reach)
   setClouds(list) {
     const seen = new Set();
     for (const c of list || []) {
@@ -481,18 +481,16 @@ export class World {
 
   makeStink() {
     const group = new THREE.Group();
-    const mats = [0x9be05a, 0x6fbf3a].map((color) => new THREE.SpriteMaterial({ map: glowTex, color, transparent: true, opacity: 0, depthWrite: false }));
-    const shellMat = stinkShellMat.clone();
-    mats.push(shellMat);
-    const shell = new THREE.Mesh(stinkShellGeo, shellMat);
-    group.add(shell);
+    const puffMat = (color) => new THREE.MeshStandardMaterial({ color, emissive: color, emissiveIntensity: 0.25, roughness: 1, transparent: true, opacity: 0, depthWrite: false });
+    const mats = [puffMat(0x9be05a), puffMat(0x6fae3a), new THREE.MeshBasicMaterial({ color: 0x8cff5a, transparent: true, opacity: 0, depthWrite: false, side: THREE.DoubleSide })];
+    group.add(new THREE.Mesh(stinkShellGeo, mats[2]));
     const puffs = [];
-    for (let i = 0; i < 18; i++) {
-      const s = new THREE.Sprite(mats[i % 2]);
+    for (let i = 0; i < 16; i++) {
+      const s = new THREE.Mesh(stinkPuffGeo, mats[i % 2]);
       const a = Math.random() * Math.PI * 2;
-      const u = 0.1 + Math.random() * 0.8;
-      const r = STINK * (0.2 + Math.random() * 0.6);
-      s.userData = { x: Math.cos(a) * Math.sqrt(1 - u * u) * r, y: u * r, z: Math.sin(a) * Math.sqrt(1 - u * u) * r, size: 2 + Math.random() * 2.5, ph: Math.random() * 6 };
+      const u = 0.15 + Math.random() * 0.75;
+      const r = STINK * (0.15 + Math.random() * 0.5);
+      s.userData = { x: Math.cos(a) * Math.sqrt(1 - u * u) * r, y: 0.4 + u * r, z: Math.sin(a) * Math.sqrt(1 - u * u) * r, size: 0.7 + Math.random() * 0.8, ph: Math.random() * 6 };
       group.add(s);
       puffs.push(s);
     }
@@ -535,7 +533,7 @@ export class World {
     sky.lerp(DARK, d * 0.92);
     const white = new THREE.Color(0xffffff);
     this.skyUniforms.top.value.copy(sky).multiplyScalar(0.82);
-    this.skyUniforms.horizon.value.copy(sky).lerp(white, 0.35 * (1 - d));
+    this.skyUniforms.horizon.value.copy(sky).lerp(white, (this.isDarkMap ? 0.12 : 0.35) * (1 - d));
     this.skyUniforms.bottom.value.copy(sky).multiplyScalar(0.7);
     this.scene.fog.color.copy(this.skyUniforms.horizon.value);
     this.scene.fog.near = 45 - d * 35;
@@ -704,8 +702,8 @@ export class World {
         this.stink.delete(id);
         continue;
       }
-      e.mats[0].opacity = e.mats[1].opacity = 0.6 * e.k;
-      e.mats[2].opacity = 0.1 * e.k;
+      e.mats[0].opacity = e.mats[1].opacity = 0.5 * e.k;
+      e.mats[2].opacity = 0.08 * e.k;
       for (const s of e.puffs) {
         const u = s.userData;
         s.position.set(u.x + Math.sin(t * 0.9 + u.ph) * 0.4, u.y + Math.sin(t * 1.3 + u.ph) * 0.3, u.z + Math.cos(t * 0.8 + u.ph) * 0.4);

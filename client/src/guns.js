@@ -22,7 +22,7 @@ const tube = (r, len, r2 = r) => new THREE.CylinderGeometry(r2, r, len, 14).rota
 const cone = (r, len) => new THREE.ConeGeometry(r, len, 14).rotateX(Math.PI / 2);
 const ring = (r, t) => new THREE.TorusGeometry(r, t, 8, 20);
 const ball = (r) => new THREE.SphereGeometry(r, 14, 10);
-const spike = (len, tilt) => new THREE.ConeGeometry(0.022, len, 6).rotateX(Math.PI / 2 - tilt); // hook prong
+const prong = (rx, ry) => new THREE.ConeGeometry(0.03, 0.2, 6).translate(0, 0.1, 0).rotateX(Math.PI / 2 - rx).rotateY(ry); // hook claw, base at origin
 
 // part: [geometry, color, x, y, z, glow, rotX]. Origin = grip, barrel along +Z, ~meters.
 const GUNS = {
@@ -64,22 +64,23 @@ const GUNS = {
   grapple: {
     muzzle: [0, 0.08, 0.5],
     parts: [
-      [box(0.12, 0.13, 0.28), 0x3a7d44, 0, 0.07, 0.08],
-      [tube(0.045, 0.16), 0x3a3a4a, 0, 0.08, 0.3],
-      [ring(0.07, 0.025).rotateY(Math.PI / 2), 0xffd23f, 0.08, 0.07, 0.06], // rope reel on the side
-      [tube(0.016, 0.12), 0xdfe3ea, 0, 0.08, 0.42],
-      [spike(0.1, 0.7), 0xdfe3ea, 0, 0.11, 0.47, 0.2], // three prongs flaring out
-      [spike(0.1, -0.7), 0xdfe3ea, 0, 0.05, 0.47, 0.2],
-      [cone(0.035, 0.07), 0x8cff5a, 0, 0.08, 0.5, 0.6],
+      [box(0.1, 0.12, 0.3), 0x3a7d44, 0, 0.07, 0.08],
+      [tube(0.05, 0.12), 0x3a3a4a, 0, 0.08, 0.28],
+      [ring(0.04, 0.016).rotateY(Math.PI / 2), 0xffd23f, 0.062, 0.07, 0.06], // rope reel on the side
+      [tube(0.018, 0.1), 0xdfe3ea, 0, 0.08, 0.38],
+      [prong(0.9, 0), 0xdfe3ea, 0, 0.09, 0.42, 0.15], // three claws flaring out past the body
+      [prong(-0.45, 0.8), 0xdfe3ea, 0.01, 0.075, 0.42, 0.15],
+      [prong(-0.45, -0.8), 0xdfe3ea, -0.01, 0.075, 0.42, 0.15],
+      [cone(0.03, 0.06), 0x8cff5a, 0, 0.08, 0.47, 0.6],
       [box(0.08, 0.16, 0.08), 0x6b4f3a, 0, -0.04, -0.02, 0, -0.25],
     ],
   },
   pearl: {
-    muzzle: [0, 0.1, 0.1],
+    muzzle: [0, 0.08, 0.08],
     parts: [
-      [ball(0.1), 0xc77dff, 0, 0.1, 0.1, 1.4],
-      [ring(0.13, 0.012), 0xffd6ff, 0, 0.1, 0.1, 1],
-      [ball(0.035), 0xffffff, -0.035, 0.135, 0.17, 1],
+      [ball(0.065), 0xc77dff, 0, 0.08, 0.08, 1.4],
+      [ring(0.085, 0.007), 0xffd6ff, 0, 0.08, 0.08, 1],
+      [ball(0.022), 0xffffff, -0.022, 0.1, 0.13, 1],
     ],
   },
 };
@@ -305,7 +306,7 @@ export class Projectiles {
 
 // ---------- grapple ropes ----------
 const ropeGeo = new THREE.CylinderGeometry(1, 1, 1, 6, 1, true).translate(0, 0.5, 0).rotateX(Math.PI / 2); // from origin along +Z
-const ropeMat = new THREE.MeshBasicMaterial({ color: 0xffd23f });
+const ropeMat = new THREE.MeshBasicMaterial({ color: 0xe0b020 });
 const hookGeo = new THREE.ConeGeometry(0.09, 0.22, 8).rotateX(Math.PI / 2);
 const hookMat = new THREE.MeshStandardMaterial({ color: 0xdfe3ea, metalness: 0.6, roughness: 0.3 });
 const SHOOT = 0.08; // s to fly out
@@ -342,7 +343,7 @@ export class Ropes {
       const len = Math.max(0.01, a.distanceTo(b));
       r.rope.position.copy(a);
       r.rope.lookAt(b);
-      r.rope.scale.set(0.025, 0.025, len);
+      r.rope.scale.set(0.035, 0.035, len);
       r.hook.position.copy(b);
       r.hook.lookAt(tmp.copy(b).sub(a).add(b));
     }

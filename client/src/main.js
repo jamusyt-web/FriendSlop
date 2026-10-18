@@ -1000,16 +1000,15 @@ function frame(now) {
   last = now;
   if (S.screen === 'loading') return;
 
-  if (S.screen === 'game') {
-    updateGame(dt, now);
-    world.assignLights([...S.views.values()], camera.position);
-  } else if (S.preview) {
+  if (S.screen === 'game') updateGame(dt, now);
+  else if (S.preview) {
     S.preview.root.rotation.y = 0;
     S.preview.update(dt, { scale: 1, fuse: null, darkness: 0 });
     orbitCamera(S.preview.root.position, now / 1000, 5.2, 1.5);
   }
 
   world.update(dt, S.screen === 'game' && rig.firstPerson ? null : camera.position); // FP: no lens to hide boxes from
+  world.assignLights(S.screen === 'game' ? [...S.views.values()] : [], camera.position);
   effects.resize(renderer.domElement.height, camera);
   effects.update(dt);
   const right = new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld, 0);

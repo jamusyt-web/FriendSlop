@@ -8,7 +8,13 @@ import { COLORS, prefs, savePrefs } from './prefs.js';
 const $ = (id) => document.getElementById(id);
 const hex = (c) => '#' + (c >>> 0).toString(16).padStart(6, '0');
 export const esc = (s) => String(s).replace(/[&<>"']/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[ch]);
-export const nameHtml = (p) => (p ? `<b style="color:${hex(p.color)}">${esc(p.name)}</b>` : '<b>???</b>');
+// on the dark HUD: very dark player colors are lifted toward white so the name stays readable
+const light = (c) => {
+  const [r, g, b] = [(c >> 16) & 255, (c >> 8) & 255, c & 255];
+  const k = r * 0.3 + g * 0.59 + b * 0.11 < 90 ? 0.55 : 0;
+  return ((r + (255 - r) * k) << 16) | ((g + (255 - g) * k) << 8) | (b + (255 - b) * k);
+};
+export const nameHtml = (p) => (p ? `<b style="color:${hex(light(p.color))}">${esc(p.name)}</b>` : '<b>???</b>');
 
 const TITLE_COLORS = ['#ffd23f', '#ff4fa3', '#2ee6ff', '#8cff5a', '#ff8c3a', '#b98cff'];
 const DEFAULT_SETTINGS = { items: ITEM_IDS, round: ROUND_TIME, chaos: true };
@@ -134,7 +140,7 @@ export function initUI(handlers) {
     const size = map.size || 'M';
     const moving = map.boxes.some((b) => b.move || b.blink || b.push);
     return `<button class="map-card${dark ? ' dark' : ''}" data-map="${id}" style="background:${hex(c)}" title="${SIZE_HINT[size]}${moving ? ' · moving parts' : ''}">` +
-      `<span class="map-size size-${size}">${size}</span>${moving ? '<span class="map-dyn">⚙</span>' : ''}` +
+      `<span class="map-size size-${size}">${size}</span>${moving ? '<span class="map-dyn">MOVING</span>' : ''}` +
       `${esc(map.name)}${size === 'L' ? '<small>9–16 players</small>' : ''}</button>`;
   }).join('');
   $('map-list').addEventListener('click', (e) => {
