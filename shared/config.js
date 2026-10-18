@@ -24,7 +24,7 @@ export const ITEM_RESPAWN = 8;
 export const PICKUP_DIST = 1.5;
 export const PEEL_DIST = 1.0;
 
-export const PLAYER = { radius: 0.4, height: 1.8 };
+export const PLAYER = { radius: 0.4, height: 1.8, eye: 1.5 }; // eye: first-person camera + gun origin height
 
 export const MOVE = {
   speed: 9,

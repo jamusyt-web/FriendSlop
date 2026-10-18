@@ -1,7 +1,7 @@
 // Third-person orbit camera: mouse yaw/pitch around the player, pulls in when a map box blocks the view,
 // smooth follow, FOV kick and screen shake.
 import * as THREE from 'three';
-import { raycastBoxes } from './physics.js';
+import { raycastBoxes } from '../../shared/physics.js';
 
 const BASE_DIST = 6.5;
 const tmpDir = new THREE.Vector3();

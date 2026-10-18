@@ -1,6 +1,6 @@
 // Own-player movement: AABB vs map boxes, per-axis resolution, step-up, double jump, dive,
 // bounce / ice / lava, chaos mods and server fx (knock, freeze, slip, boost, tp).
-import { MOVE, PLAYER } from '../../shared/config.js';
+import { MOVE, PLAYER } from './config.js';
 
 const R = PLAYER.radius;
 const H = PLAYER.height;

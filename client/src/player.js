@@ -5,7 +5,7 @@ import * as THREE from 'three';
 import { PLAYER } from '../../shared/config.js';
 import { makeCharacter } from './assets.js';
 import { glowTex } from './world.js';
-import { groundBelow } from './physics.js';
+import { groundBelow } from '../../shared/physics.js';
 
 const INTERP_DELAY = 100; // ms behind newest snapshot
 const RED = new THREE.Color(0xff1030);

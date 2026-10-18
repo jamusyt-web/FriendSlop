@@ -35,7 +35,19 @@ Phases: `lobby` → `countdown` → `play` → `results` → `lobby`.
 
 ## Controls
 
-WASD move (camera-relative), mouse look (pointer lock), Space jump (double jump in air), Shift or Right Click dive (forward lunge, MOVE.diveCooldown), E or Left Click use item, Tab scoreboard, Esc pause menu.
+WASD move (camera-relative), mouse look (pointer lock), Space jump (double jump in air), Shift or Right Click dive (forward lunge, MOVE.diveCooldown), E or Left Click use item / shoot, V toggle first/third person (saved in settings), Tab scoreboard, Esc pause menu.
+
+## Guns
+
+Knockback/stun guns, no damage, from ? boxes (shared/items.js, `gun: true`). Aim = camera forward. Server shoots from player feet + PLAYER.eye × chaos scale.
+- Boom Blaster: hitscan, knocks target along shot dir (force) + up.
+- Freeze Ray: hitscan, freezes target.
+- Rocket Launcher: server-simulated projectile (speed, life). Explodes on box/player/timeout: radial knockback within radius to everyone INCLUDING the shooter (rocket jumps).
+Hitscan and rockets stop at map boxes. Player hitbox for shots: AABB radius 0.5, height PLAYER.height × scale.
+
+## Bots
+
+Host adds/removes bots in the lobby. Bots are normal players (count toward MAX_PLAYERS, score, can be IT) with no socket. The server simulates them with shared/physics.js `Mover` (same movement as humans) and simple AI: IT → chase nearest catchable player; else flee IT, grab ? boxes when safe, use items/guns sensibly, avoid ledges/lava, jump gaps and obstacles, use bounce pads to reach higher targets. Slightly worse than a good human (speed ×0.92, aim error, reaction delay). Server applies fx to bots directly.
 
 ## Movement (client-authoritative)
 
@@ -53,17 +65,18 @@ Client → server:
 | `{t:'map', map}` | host, lobby only |
 | `{t:'start'}` | host, lobby only |
 | `{t:'s', p:[x,y,z], ry, a, tp}` | own state at SEND_RATE. `a` = anim: idle/run/jump/fall/dive/slip. `tp` = last teleport seq received (see fx tp) |
-| `{t:'use'}` | use held item |
+| `{t:'use', dir:[x,y,z]}` | use held item / fire gun. `dir` = unit camera-forward aim vector (required for guns) |
+| `{t:'bot', add}` | host, lobby only. add=true adds a bot (if room not full), false removes the newest bot |
 
 Server → client:
 | msg | meaning |
 |---|---|
 | `{t:'joined', id, code}` | you joined room `code` as player `id` |
 | `{t:'error', msg}` | e.g. room not found / full; client shows it and returns to menu |
-| `{t:'room', code, host, map, phase, players:[{id,name,color}]}` | on any lobby/player change |
-| `{t:'snap', phase, time, chaos, fuse, players:[{id,p,ry,a,it,fx,score,item}], boxes:[bool], peels:[{id,p}]}` | TICK_RATE. `time` = seconds left in phase. `chaos` = active chaos id or null. `fuse` = bomb seconds left or null. `fx` = array of active flags: ghost, shield, frozen, boost, slip. `item` = held item id or null. `boxes[i]` = map.items[i] box available |
+| `{t:'room', code, host, map, phase, players:[{id,name,color,bot}]}` | on any lobby/player change. `bot` true for bots |
+| `{t:'snap', phase, time, chaos, fuse, players:[{id,p,ry,a,it,fx,score,item,ammo}], boxes:[bool], peels:[{id,p}], rockets:[{id,p}]}` | TICK_RATE. `time` = seconds left in phase. `chaos` = active chaos id or null. `fuse` = bomb seconds left or null. `fx` = array of active flags: ghost, shield, frozen, boost, slip. `item` = held item id or null. `ammo` = shots left for guns, else null. `boxes[i]` = map.items[i] box available |
 | `{t:'fx', k, ...}` | to the affected player only. `k:'knock', v:[x,y,z]` add velocity. `k:'freeze', dur` no input. `k:'slip', dur` spin out, no input, keep sliding. `k:'boost', dur, speed`. `k:'tp', p:[x,y,z], seq` set position + zero velocity, then echo `seq` as `tp` in state msgs (server ignores older state until echoed) |
-| `{t:'ev', k, ...}` | to everyone, for juice/announcements/sfx. `k:'tag', a, b` (a tagged b) · `k:'boom', id` · `k:'chaos', id` · `k:'pickup', id, item` · `k:'use', id, item, p` · `k:'slip', id` · `k:'pop', id` (shield popped) · `k:'countdown', n` · `k:'go'` |
+| `{t:'ev', k, ...}` | to everyone, for juice/announcements/sfx. `k:'tag', a, b` (a tagged b) · `k:'boom', id` · `k:'chaos', id` · `k:'pickup', id, item` · `k:'use', id, item, p` · `k:'slip', id` · `k:'pop', id` (shield popped) · `k:'countdown', n` · `k:'go'` · `k:'shot', id, item, from:[x,y,z], to:[x,y,z], hit:id\|null` (every gun shot; for rockets `to` is null, rocket appears in snaps) · `k:'blast', p, id` (rocket exploded at p, id = shooter) |
 | `{t:'results', scores:[{id,name,color,score}]}` | sorted desc, phase results |
 
 Server is authoritative for: rooms, phases, timers, IT, tags, scores, items, peels, chaos, teleports. It never simulates movement — it uses the latest reported positions.

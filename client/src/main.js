@@ -13,7 +13,7 @@ import { loadAssets } from './assets.js';
 import { World } from './world.js';
 import { Effects } from './effects.js';
 import { CameraRig } from './camera.js';
-import { Mover, raycastBoxes } from './physics.js';
+import { Mover, raycastBoxes } from '../../shared/physics.js';
 import { PlayerView } from './player.js';
 
 const STEP = 1 / 120; // fixed physics step
