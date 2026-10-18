@@ -1,0 +1,9 @@
+.git
+node_modules
+dist
+dist-desktop
+release
+steam
+*.log
+.env
+.env.*

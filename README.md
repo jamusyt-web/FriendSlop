@@ -16,13 +16,23 @@ npm run dev          # http://localhost:3000
 
 Friends on same network open `http://<your-ip>:3000`. Create room, share 4-letter code.
 
-## Play over internet
+## Host online
+
+One always-on server on Render. Click-by-click steps are in [HOSTING.md](HOSTING.md) (`render.yaml` + `Dockerfile`).
+The same Dockerfile runs on Fly.io, Railway, or any VPS. To run production locally: `npm run build && npm start`
+(the host sets `PORT`).
+
+## Desktop / Steam
+
+The Electron app in `electron/` loads the client from `dist-desktop/` and connects to the hosted server:
 
 ```
-npm run build && npm start
+npm run desktop                                         # build + run locally
+SERVER_URL=https://friendslop.onrender.com npm run dist:win    # -> release/win-unpacked/FriendSlop.exe
+SERVER_URL=https://friendslop.onrender.com npm run dist:linux  # -> release/linux-unpacked/friendslop
 ```
 
-Deploy to any Node host (Render, Fly, Railway): build command `npm install && npm run build`, start command `npm start`. Host sets `PORT`.
+Steamworks setup, SteamPipe upload scripts (`steam/`) and store page checklist: [STEAM.md](STEAM.md).
 
 ## Controls
 

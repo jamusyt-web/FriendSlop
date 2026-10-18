@@ -1,0 +1,11 @@
+# Render Blueprint: one always-on web service that runs the FriendSlop game server.
+# Step-by-step setup: HOSTING.md
+services:
+  - type: web
+    name: friendslop          # your link becomes https://friendslop.onrender.com (or friendslop-xxxx if the name is taken)
+    runtime: docker           # builds ./Dockerfile (same image works on Fly.io, Railway, any VPS)
+    plan: starter             # always on, paid monthly. "free" also works but sleeps after ~15 min with no visitors
+    region: oregon            # closest to your players: oregon, ohio, virginia, frankfurt, singapore. Can't change later
+    healthCheckPath: /
+    autoDeployTrigger: commit # redeploy every time the branch you picked gets new commits
+    # No "branch:" on purpose: Render uses the branch you pick when you create the Blueprint.

@@ -1,0 +1,16 @@
+// SteamPipe app build script for FriendSlop. Upload with steamcmd (see STEAM.md, step 6):
+//   steamcmd.exe +login YOUR_STEAM_LOGIN +run_app_build "C:\path\to\FriendSlop\steam\app_build.vdf" +quit
+// Replace every  <<...>>  placeholder below with the numbers from Steamworks (keep the quotes).
+"AppBuild"
+{
+	"AppID" "<<APPID>>"                    // your App ID, e.g. 1234560
+	"Desc" "FriendSlop build"              // note shown in Steamworks > SteamPipe > Builds
+	"ContentRoot" "../release/"            // folder made by npm run dist:win / dist:linux
+	"BuildOutput" "./output/"              // steamcmd logs + cache (ignored by git)
+	"SetLive" ""                           // leave empty; you pick the branch on the Steamworks website
+	"Depots"
+	{
+		"<<WINDOWS_DEPOTID>>" "depot_build_windows.vdf"   // usually App ID + 1
+		// "<<LINUX_DEPOTID>>" "depot_build_linux.vdf"    // optional Linux/Steam Deck depot: remove the // at the start to upload it
+	}
+}

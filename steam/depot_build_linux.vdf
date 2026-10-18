@@ -1,0 +1,12 @@
+// Linux / Steam Deck depot: everything in release/linux-unpacked/ (the "friendslop" program + Electron files).
+// Upload this one from a Linux computer so the program keeps its "can run" permission.
+"DepotBuildConfig"
+{
+	"DepotID" "<<LINUX_DEPOTID>>"          // same number as in app_build.vdf
+	"FileMapping"
+	{
+		"LocalPath" "linux-unpacked/*"
+		"DepotPath" "."
+		"Recursive" "1"
+	}
+}

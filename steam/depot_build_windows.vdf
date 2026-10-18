@@ -1,0 +1,11 @@
+// Windows depot: everything in release/win-unpacked/ (FriendSlop.exe + Electron files) goes into the game's install folder.
+"DepotBuildConfig"
+{
+	"DepotID" "<<WINDOWS_DEPOTID>>"        // same number as in app_build.vdf
+	"FileMapping"
+	{
+		"LocalPath" "win-unpacked/*"
+		"DepotPath" "."
+		"Recursive" "1"
+	}
+}
