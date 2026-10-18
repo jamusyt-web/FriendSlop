@@ -146,9 +146,6 @@ export function setConnectingText(t) {
   $('connecting-text').textContent = t;
 }
 
-export function isOverlayOpen() {
-  return !$('pause').classList.contains('hidden') || !$('settings').classList.contains('hidden');
-}
 export function settingsOpen() {
   return !$('settings').classList.contains('hidden');
 }
@@ -306,6 +303,12 @@ export function feed(html, mine = false) {
 export function bigText(html, cls = '') {
   const box = $('big-text');
   box.innerHTML = `<div class="shout ${cls}">${html}</div>`;
+}
+
+// on leaving a room; otherwise the hidden HUD replays the last shout's animation when it's shown again
+export function clearMessages() {
+  $('big-text').innerHTML = '';
+  $('killfeed').innerHTML = '';
 }
 
 export function chaosBadge(name, remaining, frac) {

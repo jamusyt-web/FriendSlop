@@ -217,10 +217,9 @@ kbd {
   animation: bigpop 1s cubic-bezier(.2, 1.6, .4, 1) both;
 }
 .shout.chaos { color: var(--lime); font-size: clamp(44px, 7vw, 96px); animation: chaospop 2.4s cubic-bezier(.2, 1.4, .4, 1) both; }
-.shout.chaos small { display: block; font-size: 0.35em; color: #fff; -webkit-text-stroke: 4px var(--ink); }
+.shout small { display: block; font-size: 0.35em; color: #fff; -webkit-text-stroke: 4px var(--ink); }
 .shout.go { color: var(--lime); }
 .shout.red { color: var(--red); }
-.shout.white { color: #fff; }
 .shout.small { font-size: clamp(40px, 6vw, 80px); -webkit-text-stroke-width: 6px; }
 @keyframes bigpop { 0% { transform: scale(0) rotate(-20deg); opacity: 0; } 25% { transform: scale(1.2) rotate(4deg); opacity: 1; } 40% { transform: scale(1) rotate(0); } 80% { opacity: 1; } 100% { transform: scale(0.9); opacity: 0; } }
 @keyframes chaospop { 0% { transform: scale(0) rotate(180deg); opacity: 0; } 15% { transform: scale(1.25) rotate(-6deg); opacity: 1; } 25% { transform: scale(1) rotate(3deg); } 35%, 80% { transform: scale(1) rotate(-2deg); } 100% { transform: translateY(-160px) scale(0.3); opacity: 0; } }

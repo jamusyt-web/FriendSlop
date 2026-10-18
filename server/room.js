@@ -35,6 +35,15 @@ const hdist = (a, b) => Math.hypot(a[0] - b[0], a[2] - b[2]);
 const dist = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
 const forward = (ry) => [Math.sin(ry), 0, Math.cos(ry)];
 
+// Top of the highest map box under (x, z) that is not above y (so a drop lands on it), else y.
+function groundBelow(boxes, x, z, y) {
+  let top = -Infinity;
+  for (const b of boxes) {
+    if (x > b.min[0] && x < b.max[0] && z > b.min[2] && z < b.max[2] && b.max[1] <= y + 0.1 && b.max[1] > top) top = b.max[1];
+  }
+  return top > -Infinity ? top : y;
+}
+
 function shuffle(arr) {
   const out = [...arr];
   for (let i = out.length - 1; i > 0; i--) {
@@ -83,7 +92,8 @@ const USE = {
   },
   banana(room, pl, t) {
     const f = forward(pl.ry);
-    const p = [pl.p[0] - f[0] * PEEL_BEHIND, pl.p[1], pl.p[2] - f[2] * PEEL_BEHIND];
+    const [x, z] = [pl.p[0] - f[0] * PEEL_BEHIND, pl.p[2] - f[2] * PEEL_BEHIND];
+    const p = [x, groundBelow(MAPS[room.map].boxes, x, z, pl.p[1]), z]; // lands even if dropped mid-air
     room.peels.push({ id: room.nextPeelId++, owner: pl.id, p, until: t + ITEMS.banana.life });
   },
   glove(room, pl) {
@@ -203,6 +213,7 @@ class Room {
     if (this.players.size === 0) return this.destroy();
     if (this.host === pl.id) this.host = this.players.keys().next().value;
     if (this.it === pl.id) this.it = pick([...this.players.keys()]); // bomb (and fuse) passes on
+    if (this.players.size === 1 && (this.phase === 'countdown' || this.phase === 'play')) return this.startResults(); // no opponents left
     this.broadcastRoom();
   }
 
@@ -371,7 +382,7 @@ class Room {
     if (t >= this.chaosEnd) this.chaos = null;
     if (t >= this.nextChaos) this.startChaos(t);
     this.fuse -= dt;
-    if (this.fuse <= 0) this.boom();
+    if (this.fuse <= 0) this.boom(t);
     else this.checkTag(t);
   }
 
@@ -404,13 +415,15 @@ class Room {
     this.ev('pop', { id: pl.id });
   }
 
-  boom() {
+  boom(t) {
     const it = this.players.get(this.it);
     if (!it) return;
     it.score -= BOMB_PENALTY;
     this.knock(it, push(it.p, it.p, BOOM_KNOCK.force, BOOM_KNOCK.up)); // random sideways + up
     this.ev('boom', { id: it.id });
-    this.it = (pick(this.others(it)) || it).id;
+    const next = pick(this.others(it)) || it;
+    this.it = next.id;
+    next.noTag = { id: it.id, until: t + NO_TAGBACK }; // the launched player is still in reach for a tick or two
     this.fuse = rand(...BOMB_FUSE);
   }
 

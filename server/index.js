@@ -68,7 +68,7 @@ function serveStatic(req, res) {
     res.writeHead(405, { Allow: 'GET, HEAD' });
     return res.end();
   }
-  const { pathname } = new URL(req.url, 'http://x');
+  const pathname = (req.url || '/').split('?')[0]; // not new URL(): it throws on malformed targets
   // SPA fallback for routes, but a missing asset (has an extension) is a real 404
   const file = resolveStatic(pathname) || (path.extname(pathname) ? null : resolveStatic('/index.html'));
   if (!file) {
@@ -91,7 +91,14 @@ async function main() {
       server: { middlewareMode: true, hmr: { server } },
       appType: 'spa',
     });
-    server.on('request', vite.middlewares);
+    server.on('request', (req, res) => {
+      try {
+        vite.middlewares(req, res);
+      } catch {
+        res.writeHead(400); // its URL parser throws on malformed targets like `http://[`
+        res.end();
+      }
+    });
   }
 
   const wss = new WebSocketServer({ noServer: true, maxPayload: 4 * 1024 });
@@ -111,8 +118,7 @@ async function main() {
     }
   }, 15000);
   server.on('upgrade', (req, socket, head) => {
-    const { pathname } = new URL(req.url, 'http://x');
-    if (pathname === '/ws') {
+    if ((req.url || '').split('?')[0] === '/ws') {
       wss.handleUpgrade(req, socket, head, (ws) => wss.emit('connection', ws, req));
     } else if (PROD) {
       socket.destroy(); // in dev, Vite HMR handles its own upgrades

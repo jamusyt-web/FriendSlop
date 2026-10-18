@@ -85,10 +85,14 @@ export class Mover {
     this.airTime = 0;
   }
 
+  // Effect timers survive (the server keeps them through swaps and respawns). y is used as is: positions
+  // are rounded to 0.01 and map faces sit on that grid, so a reported spot never ends up inside a box.
   teleport(p) {
+    const { frozen, slip, boost, boostSpeed } = this;
     this.reset();
+    Object.assign(this, { frozen, slip, boost, boostSpeed });
     this.pos.x = this.prev.x = p[0];
-    this.pos.y = this.prev.y = p[1] + 0.01;
+    this.pos.y = this.prev.y = p[1];
     this.pos.z = this.prev.z = p[2];
   }
 
@@ -242,7 +246,7 @@ export class Mover {
       const rise = b.max[1] - p.y;
       // full steps when grounded; tiny lips (ice strips, pads) always, so we never get shoved sideways off them
       const stepOk = (canStep && this.vel.y <= 0 && rise <= MOVE.stepHeight + 0.01) || rise <= 0.15;
-      if (rise > 0 && stepOk && this.fits(p.x, b.max[1], p.z)) {
+      if (rise > 0 && stepOk && this.fits(b.max[1])) {
         p.y = b.max[1];
         this.smoothY -= rise;
         continue;
@@ -304,7 +308,7 @@ export class Mover {
     );
   }
 
-  fits(x, y, z) {
+  fits(y) {
     const save = this.pos.y;
     this.pos.y = y + EPS;
     let ok = true;

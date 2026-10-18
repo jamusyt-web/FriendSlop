@@ -79,8 +79,4 @@ export class CameraRig {
       cam.updateProjectionMatrix();
     }
   }
-
-  right() {
-    return { x: Math.cos(this.yaw), z: -Math.sin(this.yaw) };
-  }
 }

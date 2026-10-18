@@ -1,7 +1,7 @@
 // FriendSlop client: screen/phase state machine, network message handling, game loop.
 import './style.css';
 import * as THREE from 'three';
-import { SEND_RATE, CHAOS_DURATION, TAG_BONUS, BOMB_PENALTY } from '../../shared/config.js';
+import { SEND_RATE, COUNTDOWN, CHAOS_DURATION, TAG_BONUS, BOMB_PENALTY } from '../../shared/config.js';
 import { ITEMS } from '../../shared/items.js';
 import { CHAOS, mods as chaosMods } from '../../shared/chaos.js';
 import * as net from './net.js';
@@ -87,7 +87,6 @@ const near = (p) => (p ? Math.max(0, 1 - camera.position.distanceTo(p) / 30) : 0
 // ---------- flow ----------
 function goMenu(msg, isError = false) {
   net.disconnect();
-  S.leaving = true;
   input.releaseLock();
   clearGame();
   S.screen = 'menu';
@@ -96,7 +95,6 @@ function goMenu(msg, isError = false) {
   world.setChaos(null);
   makePreview();
   if (msg) ui.toast(msg, isError);
-  setTimeout(() => (S.leaving = false), 200);
 }
 
 function clearGame() {
@@ -104,12 +102,14 @@ function clearGame() {
   S.views.clear();
   Object.assign(S, { myId: null, room: null, phase: null, time: null, fuse: null, chaos: null, results: null, paused: false, mapReady: false, tpSeq: 0 });
   effects.clear();
+  mover.reset();
   input.enabled = true;
   ui.showPause(false);
   ui.setMatchHud(false);
   ui.hideResults();
   ui.setItem(null);
   ui.setScoreboard(false);
+  ui.clearMessages();
 }
 
 function makePreview() {
@@ -247,7 +247,7 @@ function setPhase(phase) {
     world.setChaos(null);
     if (prev === 'results') ui.toast('Back in the lobby — run it back?');
   }
-  if (phase === 'countdown') ui.bigText('GET READY!', 'white');
+  if (phase === 'countdown') mover.reset(); // the server clears every effect when a round starts
   ui.setLockHint(!input.locked && phase !== 'results');
   ui.setItemVisible(phase !== 'results');
 }
@@ -276,6 +276,11 @@ function applySnap(s) {
   }
   world.setItems(s.boxes);
   world.setPeels(s.peels);
+  // joined during results: the scores went out before we got here, so rebuild them from the snapshot
+  if (s.phase === 'results' && !S.results && S.room) {
+    const rows = S.room.players.filter((p) => p.id !== S.myId).map((p) => ({ ...p, score: S.views.get(p.id)?.state.score ?? 0 }));
+    showResults(rows.sort((a, b) => b.score - a.score));
+  }
 }
 
 function applyFx(m) {
@@ -283,6 +288,7 @@ function applyFx(m) {
   switch (m.k) {
     case 'knock': {
       const v = m.v || [0, 0, 0];
+      if (v[1] > 0) mover.vel.y = Math.max(mover.vel.y, 0); // launches (spring, boom) aren't eaten by fall speed
       mover.vel.x += v[0];
       mover.vel.y += v[1];
       mover.vel.z += v[2];
@@ -293,7 +299,7 @@ function applyFx(m) {
       break;
     }
     case 'freeze':
-      mover.frozen = m.dur ?? 1;
+      mover.frozen = Math.max(mover.frozen, m.dur ?? 1); // same as the server: a longer freeze wins
       break;
     case 'slip':
       mover.slip = m.dur ?? 1;
@@ -394,7 +400,7 @@ function applyEvent(e) {
       break;
     }
     case 'countdown':
-      ui.bigText(String(e.n), e.n === 1 ? 'red' : '');
+      ui.bigText(e.n === COUNTDOWN ? `${e.n}<small>GET READY!</small>` : String(e.n), e.n === 1 ? 'red' : '');
       audio.play('beep', { jitter: 0 });
       break;
     case 'go':
@@ -628,7 +634,7 @@ function updateHud(now, fuseNow, m) {
 
   // chaos badge
   if (match && S.chaos && CHAOS[S.chaos]) {
-    const left = CHAOS[S.chaos].instant ? 0 : CHAOS_DURATION - (now - S.chaosAt) / 1000;
+    const left = CHAOS_DURATION - (now - S.chaosAt) / 1000;
     ui.chaosBadge(CHAOS[S.chaos].name, left, left / CHAOS_DURATION);
   } else ui.chaosBadge(null);
 
@@ -698,7 +704,7 @@ initInput(canvas, (locked) => {
   if (!locked) S.unlockAt = performance.now();
   if (S.screen !== 'game') return;
   ui.setLockHint(!locked && !S.paused && S.phase !== 'results');
-  if (!locked && !S.paused && !S.leaving && S.phase !== 'lobby' && S.phase !== 'results') openPause();
+  if (!locked && !S.paused && S.phase !== 'lobby' && S.phase !== 'results') openPause();
 });
 
 // buttons shouldn't keep focus, or Space (jump) would press them again

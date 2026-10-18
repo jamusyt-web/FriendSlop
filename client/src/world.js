@@ -261,7 +261,9 @@ export class World {
       this.items.push({ mesh, p, avail: true, s: 1, phase: i * 1.7 });
     });
 
-    this.addClouds(group, extent, map);
+    this.baseSky = new THREE.Color(map.sky);
+    this.isDarkMap = this.baseSky.getHSL({}).l < 0.3;
+    this.addClouds(group, extent);
     this.scene.add(group);
 
     // sun + shadow frustum sized to the map
@@ -275,9 +277,6 @@ export class World {
     this.sun.position.set(ext * 0.7, 60, ext * 0.45);
     this.sun.target.position.set(0, 0, 0);
 
-    this.baseSky = new THREE.Color(map.sky);
-    const lum = this.baseSky.getHSL({}).l;
-    this.isDarkMap = lum < 0.3;
     this.baseHemi = this.isDarkMap ? 1.2 : 1.6;
     this.baseSun = this.isDarkMap ? 1.8 : 2.6;
     this.hemi.color.copy(this.baseSky).lerp(new THREE.Color(0xffffff), 0.5);
@@ -286,8 +285,8 @@ export class World {
     return map;
   }
 
-  addClouds(group, extent, map) {
-    if (this.isDarkMapId(map)) return;
+  addClouds(group, extent) {
+    if (this.isDarkMap) return;
     const mat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 1, emissive: 0xffffff, emissiveIntensity: 0.25 });
     const geo = new THREE.SphereGeometry(1, 12, 8);
     const clouds = new THREE.Group();
@@ -309,10 +308,6 @@ export class World {
     }
     this.clouds = clouds;
     group.add(clouds);
-  }
-
-  isDarkMapId(map) {
-    return new THREE.Color(map.sky).getHSL({}).l < 0.3;
   }
 
   setChaos(id, mods) {
