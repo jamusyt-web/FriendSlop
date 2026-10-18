@@ -33,3 +33,5 @@ Every sound is mono Ogg Vorbis at 44.1 kHz. Each one has its silence trimmed and
 | `sfx/freeze.ogg` | Interface Sounds, https://kenney.nl/assets/interface-sounds + Impact Sounds | `glass_001.ogg` mixed with `impactGlass_light_000.ogg` |
 | `sfx/bounce.ogg` | Digital Audio | `highUp.ogg` |
 | `sfx/win.ogg` | Music Jingles, https://kenney.nl/assets/music-jingles | `Steel jingles/jingles_STEEL10.ogg` |
+| `sfx/shoot.ogg` | Sci-fi Sounds | `laserRetro_000.ogg` |
+| `sfx/rocket.ogg` | Sci-fi Sounds | `laserLarge_000.ogg` mixed with the first 0.8 s of `thrusterFire_000.ogg` (faded out) |

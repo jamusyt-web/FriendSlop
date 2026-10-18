@@ -50,6 +50,7 @@
     <div id="hud" class="hidden">
       <div id="vignette"></div>
       <div id="crosshair"></div>
+      <div id="hitmarker"></div>
 
       <div id="hud-top">
         <div id="timer" class="pill hidden">2:30</div>
@@ -75,8 +76,8 @@
       <div id="item-slot">
         <div class="item-icon"></div>
         <div class="item-text">
-          <div class="item-name"></div>
-          <div class="item-key"><kbd>E</kbd> / <kbd>LMB</kbd> to use</div>
+          <div class="item-name"><span class="item-label"></span> <b class="item-ammo"></b></div>
+          <div class="item-key"><kbd>E</kbd> / <kbd>LMB</kbd> <span class="item-verb">to use</span></div>
         </div>
       </div>
 
@@ -99,6 +100,10 @@
         </div>
         <h3>Players <span id="player-count"></span></h3>
         <ul id="player-list"></ul>
+        <div id="bot-row" class="bot-row hidden">
+          <button id="btn-bot-add" class="btn small cyan">+ Bot</button>
+          <button id="btn-bot-del" class="btn small">− Bot</button>
+        </div>
         <h3>Map</h3>
         <div id="map-list"></div>
         <button id="btn-start" class="btn big pink">Start!</button>
@@ -111,7 +116,8 @@
         <div><b>WASD</b> move · <b>Mouse</b> look</div>
         <div><b>Space</b> jump (×2 in air)</div>
         <div><b>Shift</b> / <b>RMB</b> dive</div>
-        <div><b>E</b> / <b>LMB</b> use item</div>
+        <div><b>E</b> / <b>LMB</b> use item / shoot</div>
+        <div><b>V</b> first / third person</div>
         <div><b>Tab</b> scores · <b>Esc</b> menu</div>
       </div>
     </div>
@@ -148,6 +154,10 @@
         <label class="setting row">
           <span>Invert Y</span>
           <input type="checkbox" id="set-invert" class="toggle" />
+        </label>
+        <label class="setting row">
+          <span>First person <kbd>V</kbd></span>
+          <input type="checkbox" id="set-fp" class="toggle" />
         </label>
         <label class="setting">
           <span>Field of view <em id="fov-val"></em></span>

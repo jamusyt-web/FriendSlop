@@ -1,5 +1,5 @@
-// Juice: particle bursts (one Points batch per blend mode), expanding rings/spheres, a flash light,
-// and trauma-based camera shake.
+// Juice: particle bursts (one Points batch per blend mode), expanding rings/spheres, fading beams
+// (gun tracers), a flash light, and trauma-based camera shake.
 import * as THREE from 'three';
 
 const MAX = 2500;
@@ -97,6 +97,9 @@ class Particles {
 const tmpColor = new THREE.Color();
 const ringGeo = new THREE.RingGeometry(0.85, 1, 48);
 const sphereGeo = new THREE.SphereGeometry(1, 32, 16);
+const beamGeo = new THREE.CylinderGeometry(1, 1, 1, 8, 1, true);
+const UP = new THREE.Vector3(0, 1, 0);
+const tmpDir = new THREE.Vector3();
 
 export class Effects {
   constructor(scene) {
@@ -170,6 +173,21 @@ export class Effects {
     this.shapes.push({ m, life, max: life, radius, opacity: mat.opacity });
   }
 
+  // glowing line from a to b that thins and fades out (gun tracers)
+  beam(a, b, color, width = 0.06, life = 0.15) {
+    tmpDir.set(b.x - a.x, b.y - a.y, b.z - a.z);
+    const len = tmpDir.length();
+    if (len < 0.05) return;
+    const mat = new THREE.MeshBasicMaterial({ color, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending });
+    const m = new THREE.Mesh(beamGeo, mat);
+    m.position.set((a.x + b.x) / 2, (a.y + b.y) / 2, (a.z + b.z) / 2);
+    m.quaternion.setFromUnitVectors(UP, tmpDir.divideScalar(len));
+    m.scale.set(width, len, width);
+    m.renderOrder = 6;
+    this.scene.add(m);
+    this.shapes.push({ m, life, max: life, width, opacity: 1 });
+  }
+
   flashAt(pos, color = 0xffaa44, intensity = 60) {
     this.flash.position.set(pos.x, pos.y + 1.5, pos.z);
     this.flash.color.setHex(color);
@@ -189,7 +207,8 @@ export class Effects {
       s.life -= dt;
       const t = 1 - s.life / s.max;
       const e = 1 - Math.pow(1 - t, 3);
-      s.m.scale.setScalar(Math.max(0.01, s.radius * e));
+      if (s.width) s.m.scale.x = s.m.scale.z = s.width * (1 - t * 0.8);
+      else s.m.scale.setScalar(Math.max(0.01, s.radius * e));
       s.m.material.opacity = s.opacity * (1 - t);
       if (s.life <= 0) {
         this.scene.remove(s.m);

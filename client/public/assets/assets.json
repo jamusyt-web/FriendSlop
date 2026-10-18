@@ -37,6 +37,8 @@
     "whoosh": "sfx/whoosh.ogg",
     "freeze": "sfx/freeze.ogg",
     "bounce": "sfx/bounce.ogg",
-    "win": "sfx/win.ogg"
+    "win": "sfx/win.ogg",
+    "shoot": "sfx/shoot.ogg",
+    "rocket": "sfx/rocket.ogg"
   }
 }

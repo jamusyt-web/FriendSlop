@@ -144,7 +144,18 @@ kbd {
 #vignette.it { opacity: 1; box-shadow: inset 0 0 160px 50px rgba(255, 20, 50, 0.75); animation: throb 0.9s ease-in-out infinite; }
 #vignette.frozen { opacity: 1; box-shadow: inset 0 0 160px 60px rgba(120, 220, 255, 0.8); }
 @keyframes throb { 50% { opacity: 0.55; } }
-#crosshair { position: absolute; left: 50%; top: 50%; width: 8px; height: 8px; margin: -4px 0 0 -4px; border-radius: 50%; background: #fff; box-shadow: 0 0 0 2px var(--ink); opacity: 0.85; }
+#crosshair { position: absolute; left: 50%; top: 50%; width: 8px; height: 8px; margin: -4px 0 0 -4px; border-radius: 50%; background: #fff; box-shadow: 0 0 0 2px var(--ink); opacity: 0.85; transition: width 0.12s, height 0.12s, margin 0.12s; }
+#crosshair.gun { --xc: var(--yellow); width: 30px; height: 30px; margin: -15px 0 0 -15px; background: none; border: 3px solid var(--xc); box-shadow: 0 0 0 2px var(--ink), inset 0 0 0 2px var(--ink); opacity: 1; }
+#crosshair.gun::after { content: ''; position: absolute; left: 50%; top: 50%; width: 6px; height: 6px; margin: -3px 0 0 -3px; border-radius: 50%; background: var(--xc); box-shadow: 0 0 0 2px var(--ink); }
+#crosshair.gun[data-gun='freezeray'] { --xc: var(--cyan); }
+#crosshair.gun[data-gun='rocket'] { --xc: var(--orange); width: 42px; height: 42px; margin: -21px 0 0 -21px; }
+#crosshair.kick { animation: xkick 0.2s ease-out; }
+@keyframes xkick { 0% { transform: scale(1.7) rotate(20deg); } }
+#hitmarker { position: absolute; left: 50%; top: 50%; width: 40px; height: 40px; margin: -20px 0 0 -20px; opacity: 0; filter: drop-shadow(0 0 1px var(--ink)) drop-shadow(0 0 1px var(--ink)); }
+#hitmarker::before, #hitmarker::after { content: ''; position: absolute; left: 50%; top: 0; width: 4px; height: 100%; margin-left: -2px; background: linear-gradient(#fff 0 32%, transparent 32% 68%, #fff 68%); transform: rotate(45deg); }
+#hitmarker::after { transform: rotate(-45deg); }
+#hitmarker.show { animation: hitmark 0.35s ease-out; }
+@keyframes hitmark { 0% { opacity: 1; transform: scale(1.5); } 50% { opacity: 1; transform: scale(1); } 100% { opacity: 0; } }
 
 #hud-top { position: absolute; top: 14px; left: 50%; transform: translateX(-50%); display: flex; flex-direction: column; align-items: center; gap: 8px; }
 .pill {
@@ -190,6 +201,9 @@ kbd {
 #item-slot .item-icon { width: 58px; height: 58px; border-radius: 14px; background: rgba(255, 255, 255, 0.12); border: 3px dashed rgba(255, 255, 255, 0.4); display: flex; align-items: center; justify-content: center; font-size: 36px; }
 #item-slot .item-name { font-family: var(--display); font-size: 20px; }
 #item-slot .item-key { font-size: 13px; opacity: 0.8; }
+#item-slot .item-ammo { display: inline-block; margin-left: 4px; color: var(--yellow); }
+#item-slot .item-ammo.low { color: var(--red); }
+#item-slot .item-ammo.bump { animation: bump 0.25s ease-out; }
 #item-slot.empty .item-key { display: none; }
 #item-slot.empty .item-name { font-family: var(--body); font-size: 15px; opacity: 0.6; }
 #item-slot.full { border-color: var(--yellow); }
@@ -256,6 +270,8 @@ kbd {
 #player-list .dot { width: 16px; height: 16px; border-radius: 50%; border: 3px solid var(--ink); flex: none; }
 #player-list .nm { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #player-list .you { font-size: 12px; opacity: 0.6; }
+.bot-row { display: flex; gap: 8px; }
+.bot-row .btn { margin-top: 8px; }
 #map-list { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 .map-card { font-family: var(--display); font-size: 15px; color: var(--ink); border: 3px solid var(--ink); border-radius: 12px; padding: 18px 6px 6px; cursor: pointer; text-align: center; box-shadow: 0 3px 0 var(--ink); transition: transform 0.1s; position: relative; }
 .map-card:hover:not(:disabled) { transform: translateY(-2px) rotate(-2deg); }

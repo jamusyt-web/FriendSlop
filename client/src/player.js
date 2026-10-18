@@ -1,17 +1,19 @@
 // Character visuals for one player: model + animation crossfades, squash & stretch, name tag,
 // IT bomb/glow, shield bubble, frozen ice, ghost, boost trail, blob shadow, LIGHTS OUT light,
-// and snapshot interpolation for remote players.
+// gun in hand (arm held out to aim), and snapshot interpolation for remote players.
 import * as THREE from 'three';
 import { PLAYER } from '../../shared/config.js';
 import { makeCharacter } from './assets.js';
 import { glowTex } from './world.js';
 import { groundBelow } from '../../shared/physics.js';
+import { makeGun, isGun } from './guns.js';
 
 const INTERP_DELAY = 100; // ms behind newest snapshot
 const RED = new THREE.Color(0xff1030);
 const ICE = new THREE.Color(0xaee9ff);
 const ICE_EMIT = new THREE.Color(0x2a8fd0);
 const AIR = new Set(['jump', 'fall', 'dive']);
+const AIM_ARM = new THREE.Quaternion().setFromEuler(new THREE.Euler(0, Math.PI / 2, -0.12)); // right arm pointing forward
 const ANIM_FALLBACK = {
   idle: ['idle'],
   run: ['run', 'idle'],
@@ -99,8 +101,12 @@ export class PlayerView {
     this.sqv = 0;
     this.scale = 1;
     this.time = Math.random() * 10;
-    this.state = { it: false, fx: [], score: 0, item: null };
+    this.state = { it: false, fx: [], score: 0, item: null, ammo: null };
     this.ghostAlpha = 1;
+    this.hideBody = false; // own model in first person
+    this.gunId = null;
+    this.gun = null;
+    this.gunKick = 0;
 
     this.root = new THREE.Group();
     this.body = new THREE.Group();
@@ -109,6 +115,8 @@ export class PlayerView {
     this.body.add(this.squash);
     this.char = makeCharacter(info.color);
     this.squash.add(this.char.model);
+    this.arm = this.char.model.getObjectByName('arm-right') || null;
+    this.hand = this.arm || this.char.parts?.hands[0] || this.char.model;
 
     if (!isSelf) {
       this.tag = nameTag(info.name, info.color);
@@ -173,6 +181,37 @@ export class PlayerView {
       this.tag.material.map.dispose();
       this.tag.material.dispose();
     }
+  }
+
+  // ---------- gun ----------
+  setGun(id) {
+    if (id === this.gunId) return;
+    this.gunId = id;
+    if (this.gun) this.gun.parent.removeFromParent();
+    this.gun = id ? makeGun(id) : null;
+    if (!this.gun) return;
+    const mount = new THREE.Group();
+    if (this.arm) {
+      // in the arm bone: along the arm (-X), top up
+      mount.position.set(-0.5, -0.04, 0.02);
+      mount.rotation.y = -Math.PI / 2;
+    } else mount.position.set(0, -0.05, 0.05); // bean hand
+    mount.scale.setScalar(1.1); // toy-sized: readable from across the map
+    mount.add(this.gun);
+    this.hand.add(mount);
+  }
+
+  kickGun() {
+    this.gunKick = 1;
+  }
+
+  // where shots come out: the held gun's muzzle, or about there
+  muzzleWorld(out) {
+    if (this.gun && this.root.visible && this.body.visible) return this.gun.userData.muzzle.getWorldPosition(out);
+    const p = this.root.position;
+    const ry = this.root.rotation.y;
+    const s = this.scale;
+    return out.set(p.x + (Math.sin(ry) * 0.6 - Math.cos(ry) * 0.3) * s, p.y + PLAYER.eye * 0.85 * s, p.z + (Math.cos(ry) * 0.6 + Math.sin(ry) * 0.3) * s);
   }
 
   // ---------- networking (remote players) ----------
@@ -306,9 +345,19 @@ export class PlayerView {
     if (this.char.mixer) this.char.mixer.update(frozen ? 0 : dt * (anim === 'run' && ctx.runRate ? ctx.runRate : 1));
     if (this.char.parts) this.beanAnim(anim, frozen ? 0 : dt);
 
+    // gun: arm held out, little kick per shot
+    this.setGun(isGun(st.item) ? st.item : null);
+    if (this.gun) {
+      if (this.arm) this.arm.quaternion.copy(AIM_ARM);
+      this.gunKick *= Math.exp(-dt * 12);
+      this.gun.position.z = -0.15 * this.gunKick;
+      this.gun.rotation.x = -0.5 * this.gunKick;
+    }
+
     // visibility: ghosts vanish for others, go translucent for yourself
     const hidden = ghost && !this.isSelf;
     this.root.visible = !hidden && (this.isSelf || !!this.placed);
+    this.body.visible = !this.hideBody;
     this.ground.visible = this.root.visible;
     const targetAlpha = ghost && this.isSelf ? 0.35 : 1;
     this.ghostAlpha += (targetAlpha - this.ghostAlpha) * Math.min(1, dt * 8);
@@ -344,7 +393,7 @@ export class PlayerView {
 
     this.applyMaterials(pulse, frozen);
 
-    if (boost && !hidden && Math.random() < dt * 50) {
+    if (boost && !hidden && !this.hideBody && Math.random() < dt * 50) {
       const p = this.root.position;
       this.effects.emit({ x: p.x + (Math.random() - 0.5) * 0.5, y: p.y + 0.2 + Math.random() * 1.2 * this.scale, z: p.z + (Math.random() - 0.5) * 0.5 }, Math.random() < 0.5 ? this.color : 0xffffff, 0.35, 0.45);
     }

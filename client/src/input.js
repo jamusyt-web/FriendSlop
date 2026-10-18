@@ -13,6 +13,7 @@ const BINDS = {
   Space: 'jump',
   ShiftLeft: 'dive', ShiftRight: 'dive',
   KeyE: 'use',
+  KeyV: 'view',
   Tab: 'scores',
 };
 
@@ -83,8 +84,14 @@ export function initInput(canvas, onLockChange) {
   });
   addEventListener('mousedown', (e) => {
     if (!input.locked) return;
-    if (e.button === 0) pressed.add('use');
+    if (e.button === 0) {
+      pressed.add('use');
+      held.add('use'); // hold to keep firing a gun
+    }
     if (e.button === 2) pressed.add('dive');
+  });
+  addEventListener('mouseup', (e) => {
+    if (e.button === 0) held.delete('use');
   });
   addEventListener('contextmenu', (e) => e.preventDefault());
   document.addEventListener('pointerlockchange', () => {

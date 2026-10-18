@@ -12,6 +12,7 @@ const defaults = () => ({
   sensitivity: 1,
   invertY: false,
   fov: 75,
+  firstPerson: false,
   volume: 0.7,
 });
 

@@ -2,6 +2,7 @@
 // main.js owns game state and calls into here; button presses go back through the `on` handlers.
 import { MAPS, MAP_IDS } from '../../shared/maps.js';
 import { ITEMS } from '../../shared/items.js';
+import { MAX_PLAYERS } from '../../shared/config.js';
 import { COLORS, prefs, savePrefs } from './prefs.js';
 
 const $ = (id) => document.getElementById(id);
@@ -87,6 +88,12 @@ export function initUI(handlers) {
     prefs.invertY = inv.checked;
     savePrefs();
   };
+  const fp = $('set-fp');
+  fp.onchange = () => {
+    prefs.firstPerson = fp.checked;
+    savePrefs();
+    on.settings();
+  };
   const fs = $('set-fullscreen');
   fs.onchange = () => {
     if (fs.checked) document.documentElement.requestFullscreen?.().catch(() => (fs.checked = false));
@@ -103,6 +110,8 @@ export function initUI(handlers) {
     );
   };
   $('btn-start').onclick = () => on.start();
+  $('btn-bot-add').onclick = () => on.bot(true);
+  $('btn-bot-del').onclick = () => on.bot(false);
   $('btn-lobby-menu').onclick = () => on.pause();
   $('map-list').innerHTML = MAP_IDS.map(
     (id) => {
@@ -122,6 +131,7 @@ export function initUI(handlers) {
 }
 
 function openSettings() {
+  $('set-fp').checked = prefs.firstPerson; // V toggles it in game
   $('settings').classList.remove('hidden');
 }
 
@@ -178,7 +188,7 @@ export function updateLobby(room, myId) {
   $('player-list').innerHTML = room.players
     .map(
       (p) => `<li><span class="dot" style="background:${hex(p.color)}"></span><span class="nm">${esc(p.name)}</span>` +
-        `${p.id === myId ? '<span class="you">you</span>' : ''}${p.id === room.host ? '<span title="Host">👑</span>' : ''}</li>`,
+        `${p.id === myId ? '<span class="you">you</span>' : ''}${p.bot ? '<span title="Bot">🤖</span>' : ''}${p.id === room.host ? '<span title="Host">👑</span>' : ''}</li>`,
     )
     .join('');
   $('map-list').querySelectorAll('.map-card').forEach((b) => {
@@ -186,6 +196,9 @@ export function updateLobby(room, myId) {
     b.disabled = !isHost;
   });
   $('btn-start').classList.toggle('hidden', !isHost);
+  $('bot-row').classList.toggle('hidden', !isHost);
+  $('btn-bot-add').disabled = room.players.length >= MAX_PLAYERS;
+  $('btn-bot-del').disabled = !room.players.some((p) => p.bot);
   $('wait-host').classList.toggle('hidden', isHost);
 }
 
@@ -269,15 +282,26 @@ export function setScore(n) {
 }
 
 let lastItem;
-export function setItem(id) {
-  if (id === lastItem) return;
-  lastItem = id;
+let lastAmmo;
+// ammo: shots left for guns
+export function setItem(id, ammo = null) {
+  if (id === lastItem && ammo === lastAmmo) return;
   const el = $('item-slot');
   const item = id && ITEMS[id];
+  const ammoEl = el.querySelector('.item-ammo');
+  ammoEl.textContent = item?.gun && ammo != null ? `${ammo}/${item.ammo}` : '';
+  ammoEl.classList.toggle('low', ammo === 1);
+  if (id === lastItem) {
+    lastAmmo = ammo;
+    return restartAnim(ammoEl, 'bump');
+  }
+  lastItem = id;
+  lastAmmo = ammo;
   el.classList.toggle('empty', !item);
   el.classList.toggle('full', !!item);
   el.querySelector('.item-icon').textContent = item ? item.icon : '';
-  el.querySelector('.item-name').textContent = item ? item.name : 'No item — grab a ? box';
+  el.querySelector('.item-label').textContent = item ? item.name : 'No item — grab a ? box';
+  el.querySelector('.item-verb').textContent = item?.gun ? 'to shoot (hold for auto)' : 'to use';
   if (item) {
     el.classList.remove('pop');
     void el.offsetWidth;
@@ -324,8 +348,27 @@ export function setLockHint(v) {
   $('lock-hint').classList.toggle('hidden', !v);
 }
 
-export function setCrosshair(v) {
-  $('crosshair').classList.toggle('hidden', !v);
+// gun: held gun id (bigger, colored reticle) or null (dot)
+export function setCrosshair(v, gun = null) {
+  const el = $('crosshair');
+  el.classList.toggle('hidden', !v);
+  el.classList.toggle('gun', !!gun);
+  if (gun) el.dataset.gun = gun;
+}
+
+export function crosshairKick() {
+  restartAnim($('crosshair'), 'kick');
+}
+
+// own shot hit someone
+export function hitMarker() {
+  restartAnim($('hitmarker'), 'show');
+}
+
+function restartAnim(el, cls) {
+  el.classList.remove(cls);
+  void el.offsetWidth;
+  el.classList.add(cls);
 }
 
 function scoreRows(rows, myId, winner) {
@@ -334,7 +377,7 @@ function scoreRows(rows, myId, winner) {
       (r, i) =>
         `<li class="${r.id === myId ? 'me' : ''} ${r.it ? 'it' : ''} ${winner && i === 0 ? 'winner' : ''}">` +
         `<span class="rank">${winner && i === 0 ? '👑' : i + 1}</span><span class="dot" style="background:${hex(r.color)}"></span>` +
-        `<span class="nm">${esc(r.name)}${r.it ? ' 💣' : ''}${r.id === myId ? ' <small>(you)</small>' : ''}</span><span class="pts">${r.score}</span></li>`,
+        `<span class="nm">${esc(r.name)}${r.bot ? ' 🤖' : ''}${r.it ? ' 💣' : ''}${r.id === myId ? ' <small>(you)</small>' : ''}</span><span class="pts">${r.score}</span></li>`,
     )
     .join('');
 }
