@@ -1,6 +1,12 @@
 // Maps are axis-aligned boxes. Shared so client (render + collision) and server (spawns, items) agree.
 // Box kinds: solid | bounce (launch up on landing) | lava (touch = respawn) | ice (slippery top)
-// spawns / items are [x, y, z] with y = surface height the player stands on.
+//            | conveyor (push: [vx, vz] m/s carries anyone standing on top)
+// Dynamic boxes (optional, any kind):
+//   move:  { to: [dx, dy, dz], period, phase? } smooth ping-pong between base position and base + to
+//   blink: { period, on, phase? } solid only while (t / period + phase) % 1 < on
+// Maps are shared module data: call instantiate(id) for a private mutable copy, then setMapTime(map, t)
+// before stepping physics. spawns / items are [x, y, z] with y = surface height the player stands on.
+// size: S | M | L (L = built for 9-16 players).
 
 const box = (x, z, w, d, y, h, kind = 'solid', color) => ({
   min: [x - w / 2, y, z - d / 2],
@@ -34,6 +40,7 @@ const castle = (() => {
   const G = 0x7ec850, W = 0xf4a261, S = 0xe9c46a, T = 0x2a9d8f, P = 0xe76f51;
   return {
     name: 'Bounce Castle',
+    size: 'M',
     sky: 0x8fd3ff,
     killY: -20,
     boxes: [
@@ -69,6 +76,7 @@ const sky = (() => {
   const island = (x, z, s) => [box(x, z, s, s, -3, 2.6, 'solid', D), box(x, z, s, s, -0.4, 0.4, 'solid', I)];
   return {
     name: 'Sky Slop',
+    size: 'M',
     sky: 0xffc8dd,
     killY: -15,
     boxes: [
@@ -101,6 +109,7 @@ const maze = (() => {
   const crateWall = (x, z, w, d, h = 2.4) => box(x, z, w, d, 0, h, 'solid', K);
   return {
     name: 'Crate Maze',
+    size: 'M',
     sky: 0x22223b,
     killY: -20,
     boxes: [
@@ -143,6 +152,7 @@ const lava = (() => {
   const at = (x, z) => [x, tops[`${x},${z}`], z];
   return {
     name: 'Floor Is Lava',
+    size: 'S',
     sky: 0xffb4a2,
     killY: -10,
     boxes,
@@ -153,3 +163,37 @@ const lava = (() => {
 
 export const MAPS = { castle, sky, maze, lava };
 export const MAP_IDS = Object.keys(MAPS);
+
+const BLINK_WARN = 0.75; // seconds of `warn` before a blinking box switches off
+
+// Private mutable copy of a map (each room / client gets its own so dynamic boxes don't clash).
+export function instantiate(id) {
+  const map = structuredClone(MAPS[id]);
+  for (const b of map.boxes) if (b.move || b.blink) b.base = { min: [...b.min], max: [...b.max] };
+  setMapTime(map, 0);
+  return map;
+}
+
+// Updates dynamic boxes in place for map time t (seconds): min/max, dv (velocity, for carrying riders),
+// off (blinked out: ignore for collision), warn (about to blink out: render flashing).
+export function setMapTime(map, t) {
+  for (const b of map.boxes) {
+    if (b.move) {
+      const { to, period, phase = 0 } = b.move;
+      const a = 2 * Math.PI * (t / period + phase);
+      const k = (1 - Math.cos(a)) / 2;
+      const dk = (Math.PI / period) * Math.sin(a);
+      for (let i = 0; i < 3; i++) {
+        b.min[i] = b.base.min[i] + to[i] * k;
+        b.max[i] = b.base.max[i] + to[i] * k;
+      }
+      b.dv = [to[0] * dk, to[1] * dk, to[2] * dk];
+    }
+    if (b.blink) {
+      const { period, on, phase = 0 } = b.blink;
+      const f = (((t / period + phase) % 1) + 1) % 1;
+      b.off = f >= on;
+      b.warn = !b.off && (on - f) * period < BLINK_WARN;
+    }
+  }
+}
