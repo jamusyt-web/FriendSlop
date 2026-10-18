@@ -1,6 +1,9 @@
 // Player profile + settings, persisted in localStorage.
 
-export const COLORS = [0xff5a5f, 0xff9f1c, 0xffd60a, 0x5ce65c, 0x2ec4ff, 0x5b6cff, 0xb15cff, 0xff70c8];
+export const COLORS = [
+  0xff5a5f, 0xff9f1c, 0xffd60a, 0x5ce65c, 0x2ec4ff, 0x5b6cff, 0xb15cff, 0xff70c8,
+  0x00d1b2, 0xa0522d, 0xf2f2f2, 0x3a3a50, 0xb5179e, 0xffb4a2, 0x7cb518, 0x1d3f8a,
+];
 
 const KEY = 'friendslop.prefs.v1';
 const NAMES = ['Noodle', 'Gremlin', 'Bean', 'Wobbler', 'Goober', 'Sploot', 'Pickle', 'Blorp', 'Dingus', 'Toast'];

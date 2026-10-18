@@ -1,8 +1,8 @@
-// DOM UI: menu, settings, lobby panel, HUD, scoreboard, results, pause, toasts.
+// DOM UI: menu, settings, lobby panel (players, map, game settings), HUD, scoreboard, results + awards, pause, toasts.
 // main.js owns game state and calls into here; button presses go back through the `on` handlers.
 import { MAPS, MAP_IDS } from '../../shared/maps.js';
-import { ITEMS } from '../../shared/items.js';
-import { MAX_PLAYERS } from '../../shared/config.js';
+import { ITEMS, ITEM_IDS } from '../../shared/items.js';
+import { MAX_PLAYERS, ROUND_TIME, ROUND_TIMES } from '../../shared/config.js';
 import { COLORS, prefs, savePrefs } from './prefs.js';
 
 const $ = (id) => document.getElementById(id);
@@ -11,7 +11,21 @@ export const esc = (s) => String(s).replace(/[&<>"']/g, (ch) => ({ '&': '&amp;',
 export const nameHtml = (p) => (p ? `<b style="color:${hex(p.color)}">${esc(p.name)}</b>` : '<b>???</b>');
 
 const TITLE_COLORS = ['#ffd23f', '#ff4fa3', '#2ee6ff', '#8cff5a', '#ff8c3a', '#b98cff'];
+const DEFAULT_SETTINGS = { items: ITEM_IDS, round: ROUND_TIME, chaos: true };
+const SIZE_HINT = { S: 'Small map', M: 'Medium map', L: 'Big map for 9–16 players' };
+const VERB = { grapple: 'to grapple', pearl: 'to throw' }; // other guns: shoot
+const AWARDS = [ // [stat, icon, title, singular, plural]
+  ['tags', '👉', 'Tag Master', 'tag', 'tags'],
+  ['knockoffs', '🥊', 'Knockout King', 'knockoff', 'knockoffs'],
+  ['falls', '🤕', 'Clumsiest', 'fall', 'falls'],
+  ['booms', '💥', 'Boom Magnet', 'boom', 'booms'],
+];
+const mmss = (s) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+const settingsOf = (room) => room?.settings || DEFAULT_SETTINGS;
 let on = {};
+let lobbyRoom = null;
+let lobbyHost = false;
+let itemsOff = false;
 
 export function initUI(handlers) {
   on = handlers;
@@ -113,17 +127,46 @@ export function initUI(handlers) {
   $('btn-bot-add').onclick = () => on.bot(true);
   $('btn-bot-del').onclick = () => on.bot(false);
   $('btn-lobby-menu').onclick = () => on.pause();
-  $('map-list').innerHTML = MAP_IDS.map(
-    (id) => {
-      const c = MAPS[id].sky;
-      const dark = ((c >> 16) & 255) * 0.3 + ((c >> 8) & 255) * 0.59 + (c & 255) * 0.11 < 110;
-      return `<button class="map-card${dark ? ' dark' : ''}" data-map="${id}" style="background:${hex(c)}">${esc(MAPS[id].name)}</button>`;
-    },
-  ).join('');
+  $('map-list').innerHTML = MAP_IDS.map((id) => {
+    const map = MAPS[id];
+    const c = map.sky;
+    const dark = ((c >> 16) & 255) * 0.3 + ((c >> 8) & 255) * 0.59 + (c & 255) * 0.11 < 110;
+    const size = map.size || 'M';
+    const moving = map.boxes.some((b) => b.move || b.blink || b.push);
+    return `<button class="map-card${dark ? ' dark' : ''}" data-map="${id}" style="background:${hex(c)}" title="${SIZE_HINT[size]}${moving ? ' · moving parts' : ''}">` +
+      `<span class="map-size size-${size}">${size}</span>${moving ? '<span class="map-dyn">⚙</span>' : ''}` +
+      `${esc(map.name)}${size === 'L' ? '<small>9–16 players</small>' : ''}</button>`;
+  }).join('');
   $('map-list').addEventListener('click', (e) => {
     const b = e.target.closest('.map-card');
     if (b && !b.disabled) on.map(b.dataset.map);
   });
+
+  // game settings: the host edits, everyone else sees them read-only
+  $('item-chips').innerHTML = ITEM_IDS.map((id) => {
+    const it = ITEMS[id];
+    return `<button class="chip" data-item="${id}" title="${esc(it.desc)}"><span>${it.icon}</span>${esc(it.name)}</button>`;
+  }).join('');
+  $('round-pick').innerHTML = ROUND_TIMES.map((t) => `<button class="seg-btn" data-round="${t}">${mmss(t)}</button>`).join('');
+  const change = (patch) => {
+    if (!lobbyRoom || !lobbyHost) return;
+    lobbyRoom.settings = { ...settingsOf(lobbyRoom), ...patch }; // show it now, the server's room message confirms
+    renderSettings(lobbyRoom.settings);
+    on.gameSettings(lobbyRoom.settings);
+  };
+  $('item-chips').addEventListener('click', (e) => {
+    const id = e.target.closest('.chip')?.dataset.item;
+    if (!id) return;
+    const items = settingsOf(lobbyRoom).items;
+    change({ items: items.includes(id) ? items.filter((i) => i !== id) : ITEM_IDS.filter((i) => i === id || items.includes(i)) });
+  });
+  $('items-all').onclick = () => change({ items: [...ITEM_IDS] });
+  $('items-none').onclick = () => change({ items: [] });
+  $('round-pick').addEventListener('click', (e) => {
+    const b = e.target.closest('.seg-btn');
+    if (b) change({ round: +b.dataset.round });
+  });
+  $('chaos-toggle').onchange = () => change({ chaos: $('chaos-toggle').checked });
 
   // pause
   $('btn-resume').onclick = () => on.resume();
@@ -200,6 +243,28 @@ export function updateLobby(room, myId) {
   $('btn-bot-add').disabled = room.players.length >= MAX_PLAYERS;
   $('btn-bot-del').disabled = !room.players.some((p) => p.bot);
   $('wait-host').classList.toggle('hidden', isHost);
+  lobbyRoom = room;
+  lobbyHost = isHost;
+  renderSettings(settingsOf(room));
+}
+
+function renderSettings(st) {
+  $('item-chips').querySelectorAll('.chip').forEach((b) => {
+    b.classList.toggle('on', st.items.includes(b.dataset.item));
+    b.classList.toggle('ro', !lobbyHost); // not `disabled`: tooltips still work
+  });
+  $('item-count').textContent = `${st.items.length}/${ITEM_IDS.length}`;
+  $('item-quick').classList.toggle('hidden', !lobbyHost);
+  $('round-pick').querySelectorAll('.seg-btn').forEach((b) => {
+    b.classList.toggle('on', +b.dataset.round === st.round);
+    b.disabled = !lobbyHost;
+  });
+  $('chaos-toggle').checked = st.chaos;
+  $('chaos-toggle').disabled = !lobbyHost;
+  if (itemsOff !== !st.items.length) {
+    itemsOff = !st.items.length;
+    lastItem = undefined; // redraw the empty item slot
+  }
 }
 
 // ---------- HUD ----------
@@ -223,10 +288,12 @@ export function setTimer(sec) {
   el.classList.toggle('low', s <= 10);
 }
 
-export function setFuse(fuse, max) {
+// count: bombs in play (shown when there's more than one)
+export function setFuse(fuse, max, count = 1) {
   const el = $('fuse');
   if (fuse == null) return el.classList.add('hidden');
   el.classList.remove('hidden');
+  el.querySelector('.bomb-count').textContent = count > 1 ? '×' + count : '';
   const f = Math.max(0, fuse);
   const frac = Math.max(0, Math.min(1, f / (max || 1)));
   el.querySelector('i').style.width = frac * 100 + '%';
@@ -235,15 +302,24 @@ export function setFuse(fuse, max) {
   el.classList.toggle('hot', f < 5);
 }
 
+// Short Fuse: the bar jumps
+export function fuseCut() {
+  restartAnim($('fuse'), 'cut');
+}
+
+// others: the other ITs (room player infos); isMe: you're IT too
 let lastIt = null;
-export function setItLabel(p, isMe) {
+export function setItLabel(others, isMe) {
   const el = $('it-label');
-  const key = p && !isMe ? p.id + p.name : null;
+  const key = others.length ? others.map((p) => p.id + p.name).join() + isMe : null;
   if (key === lastIt) return;
   lastIt = key;
   if (!key) return el.classList.add('hidden');
   el.classList.remove('hidden');
-  el.innerHTML = `💣 ${esc(p.name)} is IT — run!`;
+  const names = others.map((p) => esc(p.name));
+  const who = names.length > 1 ? names.slice(0, -1).join(', ') + ' & ' + names[names.length - 1] : names[0];
+  const are = names.length > 1 ? 'are' : 'is';
+  el.innerHTML = isMe ? `💣 ${who} ${are} IT too` : `💣 ${who} ${are} IT — run!`;
 }
 
 let youIt = false;
@@ -266,6 +342,10 @@ export function setYouAreIt(v) {
 
 export function setFrozenVignette(v) {
   $('vignette').classList.toggle('frozen', v && !youIt);
+}
+
+export function setDizzyVignette(v) {
+  $('vignette').classList.toggle('dizzy', v && !youIt);
 }
 
 let lastScore = null;
@@ -300,8 +380,8 @@ export function setItem(id, ammo = null) {
   el.classList.toggle('empty', !item);
   el.classList.toggle('full', !!item);
   el.querySelector('.item-icon').textContent = item ? item.icon : '';
-  el.querySelector('.item-label').textContent = item ? item.name : 'No item — grab a ? box';
-  el.querySelector('.item-verb').textContent = item?.gun ? 'to shoot (hold for auto)' : 'to use';
+  el.querySelector('.item-label').textContent = item ? item.name : itemsOff ? 'Items are off' : 'No item — grab a ? box';
+  el.querySelector('.item-verb').textContent = item?.gun ? VERB[id] || 'to shoot (hold for auto)' : 'to use';
   if (item) {
     el.classList.remove('pop');
     void el.offsetWidth;
@@ -386,7 +466,7 @@ export function setScoreboard(visible, rows, myId) {
   $('scoreboard').classList.toggle('hidden', !visible);
   if (!visible) return;
   const list = $('scoreboard-list');
-  list.className = 'score-list';
+  list.className = 'score-list' + (rows.length > 8 ? ' compact' : '');
   list.innerHTML = scoreRows(rows, myId, false);
 }
 
@@ -396,8 +476,20 @@ export function showResults(scores, myId) {
   const w = scores[0];
   $('winner-name').innerHTML = w ? `${esc(w.name)} wins!` : 'Nobody wins?!';
   const list = $('results-list');
-  list.className = 'score-list';
+  list.className = 'score-list' + (scores.length > 8 ? ' compact' : '');
   list.innerHTML = scoreRows(scores, myId, true);
+
+  // fun awards from the round's stats (the first, i.e. highest scoring, wins ties)
+  const awards = AWARDS.map(([key, icon, title, one, many], i) => {
+    let best = null;
+    for (const r of scores) if ((r.stats?.[key] ?? 0) > (best?.stats[key] ?? 0)) best = r;
+    if (!best) return '';
+    const n = best.stats[key];
+    return `<div class="award" style="animation-delay:${0.4 + i * 0.15}s"><span class="award-icon">${icon}</span><span class="award-title">${title}</span>` +
+      `<span class="award-who"><span class="dot" style="background:${hex(best.color)}"></span>${esc(best.name)}</span><small>${n} ${n === 1 ? one : many}</small></div>`;
+  }).join('');
+  $('awards').innerHTML = awards;
+  $('awards').classList.toggle('hidden', !awards);
 }
 
 export function hideResults() {

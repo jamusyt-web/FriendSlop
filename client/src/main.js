@@ -1,9 +1,10 @@
 // FriendSlop client: screen/phase state machine, network message handling, game loop.
 import './style.css';
 import * as THREE from 'three';
-import { SEND_RATE, COUNTDOWN, CHAOS_DURATION, TAG_BONUS, BOMB_PENALTY, PLAYER } from '../../shared/config.js';
+import { SEND_RATE, COUNTDOWN, CHAOS_DURATION, TAG_BONUS, BOMB_PENALTY, PLAYER, FALL_PENALTY, KNOCKOFF_BONUS, bombCount } from '../../shared/config.js';
 import { ITEMS } from '../../shared/items.js';
 import { CHAOS, mods as chaosMods } from '../../shared/chaos.js';
+import { setMapTime } from '../../shared/maps.js';
 import * as net from './net.js';
 import * as ui from './ui.js';
 import * as audio from './audio.js';
@@ -15,9 +16,12 @@ import { Effects } from './effects.js';
 import { CameraRig } from './camera.js';
 import { Mover, raycastBoxes } from '../../shared/physics.js';
 import { PlayerView } from './player.js';
-import { Viewmodel, Rockets, isGun, GUN_COLOR } from './guns.js';
+import { Viewmodel, Projectiles, Ropes, isGun, GUN_COLOR } from './guns.js';
 
 const STEP = 1 / 120; // fixed physics step
+const DANCE_TIME = 2; // F tap dances this long (holding F keeps dancing)
+const GUN_SFX = { rocket: ['rocket', 1], freezeray: ['shoot', 0.7], grapple: ['shoot', 0.55], pearl: ['whoosh', 1.5] }; // [sfx, rate], default shoot
+const BOMBS_TEXT = (n) => (n > 1 ? `${n} BOMBS!` : 'GET READY!');
 const CHAOS_BLURB = {
   lowgrav: 'floaty mode engaged',
   zoomies: 'gotta go fast',
@@ -47,7 +51,8 @@ const rig = new CameraRig(camera);
 const mover = new Mover();
 const viewCtx = { scene, world, effects };
 const vm = new Viewmodel(scene.environment);
-const rockets = new Rockets(scene, effects);
+const projectiles = new Projectiles(scene, effects);
+const ropes = new Ropes(scene);
 const eyePos = new THREE.Vector3();
 const aim = new THREE.Vector3();
 const muzzle = new THREE.Vector3();
@@ -71,8 +76,9 @@ const S = {
   views: new Map(), // id -> PlayerView
   snapAt: 0,
   time: null,
-  fuse: null,
-  fuseMax: 1,
+  mt: 0, // map clock (drives moving / blinking boxes); follows the server's snapshot `mt` smoothly
+  mtSnap: 0,
+  mtSnapAt: 0,
   chaos: null,
   chaosAt: 0,
   results: null,
@@ -86,6 +92,8 @@ const S = {
   unlockAt: 0,
   nextShot: 0, // own gun cooldown (performance.now ms)
   useBuf: 0, // a gun click during the cooldown fires when it ends (until this time)
+  dizzyK: 0, // camera wobble blend
+  tpFrom: null, // where the last teleport took us from (warp poofs)
 };
 
 const me = () => S.views.get(S.myId);
@@ -109,9 +117,10 @@ function goMenu(msg, isError = false) {
 function clearGame() {
   for (const v of S.views.values()) v.dispose();
   S.views.clear();
-  Object.assign(S, { myId: null, room: null, phase: null, time: null, fuse: null, chaos: null, results: null, paused: false, mapReady: false, tpSeq: 0, nextShot: 0, useBuf: 0 });
+  Object.assign(S, { myId: null, room: null, phase: null, time: null, chaos: null, results: null, paused: false, mapReady: false, tpSeq: 0, nextShot: 0, useBuf: 0, dizzyK: 0 });
   effects.clear();
-  rockets.clear();
+  projectiles.clear();
+  ropes.clear();
   vm.set(null);
   mover.reset();
   input.enabled = true;
@@ -208,8 +217,7 @@ function applyRoom(room) {
   if (S.screen !== 'game' || S.myId == null) return;
 
   if (!S.mapReady || world.mapId !== room.map) {
-    world.load(room.map);
-    mover.boxes = world.boxes;
+    loadMap(room.map);
     S.mapReady = true;
     respawn(false);
   }
@@ -241,6 +249,22 @@ function applyRoom(room) {
   setPhase(room.phase);
 }
 
+// the server restarts map time at 0 whenever it loads a map
+function loadMap(id) {
+  world.load(id);
+  mover.boxes = world.solids;
+  Object.assign(S, { mt: 0, mtSnap: 0, mtSnapAt: performance.now() });
+  world.setTime(0);
+}
+
+// Map clock: runs at real speed, nudged toward the server's (snapshot mt + time since). Never steps back
+// unless it's way off (joined late, tab was hidden).
+function tickMapClock(dt, now) {
+  const target = S.mtSnap + (now - S.mtSnapAt) / 1000;
+  const err = target - S.mt;
+  S.mt = Math.abs(err) > 1 ? target : S.mt + dt * Math.min(2, Math.max(0.5, 1 + err * 2));
+}
+
 function setPhase(phase) {
   if (!phase || phase === S.phase) return;
   const prev = S.phase;
@@ -255,7 +279,6 @@ function setPhase(phase) {
   }
   if (phase === 'lobby') {
     S.chaos = null;
-    S.fuse = null;
     world.setChaos(null);
     if (prev === 'results') ui.toast('Back in the lobby — run it back?');
   }
@@ -269,8 +292,10 @@ function applySnap(s) {
   setPhase(s.phase);
   S.snapAt = now;
   S.time = s.time ?? null;
-  if (s.fuse != null && (S.fuse == null || s.fuse > S.fuse + 0.5)) S.fuseMax = s.fuse;
-  S.fuse = s.fuse ?? null;
+  if (s.mt != null) {
+    S.mtSnap = s.mt;
+    S.mtSnapAt = now;
+  }
   const chaos = s.chaos ?? null;
   if (chaos !== S.chaos) {
     if (chaos && chaos !== S.chaos) S.chaosAt = now;
@@ -280,16 +305,21 @@ function applySnap(s) {
   for (const p of s.players || []) {
     const v = S.views.get(p.id);
     if (!v) continue;
+    const fuse = p.fuse ?? null;
+    if (fuse != null && (v.state.fuse == null || fuse > v.state.fuse + 0.5)) v.fuseMax = fuse; // freshly lit bomb
+    v.state.fuse = fuse;
     v.state.it = !!p.it;
     v.state.fx = p.fx || [];
     v.state.score = p.score ?? 0;
     v.state.item = p.item ?? null;
     v.state.ammo = p.ammo ?? null;
-    if (!v.isSelf && p.p) v.push(now, p.p, p.ry ?? 0, p.a);
+    if (!v.isSelf && p.p) v.push(now, p.p, p.ry ?? 0, p.a, s.mt);
   }
   world.setItems(s.boxes);
   world.setPeels(s.peels);
-  rockets.sync(s.rockets, now);
+  world.setWalls(s.walls);
+  world.setClouds(s.clouds);
+  projectiles.sync(s.projectiles, now);
   // joined during results: the scores went out before we got here, so rebuild them from the snapshot
   if (s.phase === 'results' && !S.results && S.room) {
     const rows = S.room.players.filter((p) => p.id !== S.myId).map((p) => ({ ...p, score: S.views.get(p.id)?.state.score ?? 0 }));
@@ -323,8 +353,15 @@ function applyFx(m) {
       mover.boostSpeed = m.speed ?? 1.5;
       rig.kick(12);
       break;
+    case 'float':
+      mover.float = Math.max(mover.float, m.dur ?? 1);
+      break;
+    case 'dizzy':
+      mover.dizzy = Math.max(mover.dizzy, m.dur ?? 1);
+      break;
     case 'tp': {
       const from = { ...mover.pos };
+      S.tpFrom = from;
       mover.teleport(m.p);
       S.tpSeq = m.seq ?? S.tpSeq;
       poof(from);
@@ -341,6 +378,12 @@ function applyEvent(e) {
   const mine = (id) => id === S.myId;
   switch (e.k) {
     case 'tag': {
+      const va = S.views.get(e.a);
+      const vb = S.views.get(e.b);
+      if (va && vb) {
+        vb.fuseMax = va.fuseMax; // the bomb changes hands, fuse and all
+        vb.state.fuse = va.state.fuse;
+      }
       const p = at(e.b);
       if (p) {
         const c = { x: p.x, y: p.y + 1, z: p.z };
@@ -396,7 +439,46 @@ function applyEvent(e) {
       const p = e.p ? { x: e.p[0], y: e.p[1], z: e.p[2] } : at(e.id);
       itemFx(e.item, p, mine(e.id));
       if (e.item === 'glove') S.views.get(e.id)?.playOnce('punch');
-      if (item) ui.feed(`${ui.nameHtml(infoOf(e.id))} used ${item.icon} ${ui.esc(item.name)}`, mine(e.id));
+      if (e.item === 'fuse') ui.feed(`${item.icon} ${ui.nameHtml(infoOf(e.id))} cut every fuse by ${item.cut}s!`, true);
+      else if (item) ui.feed(`${ui.nameHtml(infoOf(e.id))} used ${item.icon} ${ui.esc(item.name)}`, mine(e.id));
+      break;
+    }
+    case 'warp': {
+      const to = e.p ? { x: e.p[0], y: e.p[1], z: e.p[2] } : null;
+      const from = mine(e.id) ? S.tpFrom : at(e.id); // our own fx tp already moved us
+      if (to) projectiles.removeNear(to, 'pearl');
+      for (const q of [from, to]) if (q) warpPoof(q);
+      audio.play('whoosh', { at: to, rate: 1.7 });
+      audio.play('freeze', { at: to, rate: 1.9, volume: 0.45 });
+      if (mine(e.id)) rig.kick(10);
+      break;
+    }
+    case 'fell': {
+      const play = S.phase === 'play';
+      const by = e.by != null ? infoOf(e.by) : null;
+      const who = ui.nameHtml(infoOf(e.id));
+      if (by) ui.feed(`🥊 ${ui.nameHtml(by)} knocked ${who} off!${play ? ` <b>+${KNOCKOFF_BONUS}</b>` : ''}`, mine(e.id) || mine(e.by));
+      else ui.feed(`💀 ${who} fell off!${play ? ` <b>−${FALL_PENALTY}</b>` : ''}`, mine(e.id));
+      if (!play) break;
+      if (mine(e.id)) ui.bigText(`FELL OFF! −${FALL_PENALTY}`, 'red small');
+      else if (mine(e.by)) {
+        ui.bigText(`KNOCKOFF! +${KNOCKOFF_BONUS}`, 'go small');
+        audio.play('tag', { rate: 1.3 });
+      }
+      break;
+    }
+    case 'bonk': {
+      const p = at(e.b);
+      if (p) {
+        effects.burst({ x: p.x, y: p.y + 1.2, z: p.z }, { count: 22, colors: [0xffe14d, 0xffffff, 0xff4fa3], speed: 9, up: 3, size: 0.35, additive: true });
+        effects.ring(p, 0xffe14d, 2.5, 0.35);
+      }
+      audio.play('punch', { at: p, rate: 0.6 });
+      audio.play('bounce', { at: p, rate: 0.7, volume: 0.6 });
+      S.views.get(e.b)?.stretch(1.6);
+      S.views.get(e.a)?.land(10);
+      effects.addShake(mine(e.a) || mine(e.b) ? 0.45 : near(p) * 0.3);
+      if (mine(e.a) || mine(e.b)) ui.feed(`🍄 ${ui.nameHtml(infoOf(e.a))} bonked ${ui.nameHtml(infoOf(e.b))}!`, true);
       break;
     }
     case 'slip': {
@@ -421,15 +503,24 @@ function applyEvent(e) {
       blastFx(e);
       break;
     case 'countdown':
-      ui.bigText(e.n === COUNTDOWN ? `${e.n}<small>GET READY!</small>` : String(e.n), e.n === 1 ? 'red' : '');
+      ui.bigText(e.n === COUNTDOWN ? `${e.n}<small>${BOMBS_TEXT(bombCount(S.room?.players.length ?? 1))}</small>` : String(e.n), e.n === 1 ? 'red' : '');
       audio.play('beep', { jitter: 0 });
       break;
-    case 'go':
-      ui.bigText('GO!', 'go');
+    case 'go': {
+      const bombs = [...S.views.values()].filter((v) => v.state.it).length;
+      ui.bigText(bombs > 1 ? `GO!<small>${bombs} BOMBS!</small>` : 'GO!', 'go');
       audio.play('go', { jitter: 0 });
       effects.addShake(0.2);
       break;
+    }
   }
+}
+
+function warpPoof(p) {
+  const c = { x: p.x, y: p.y + 0.9, z: p.z };
+  effects.burst(c, { count: 26, colors: [0xc77dff, 0xffd6ff, 0x7b2cbf], speed: 6, up: 1, size: 0.3, life: 0.7, gravity: 0, drag: 3, additive: true });
+  effects.burst(c, { count: 10, colors: [0xe0c8ff, 0xffffff], speed: 3, up: 0.5, size: 0.7, endSize: 1.3, gravity: -1, life: 0.6 });
+  effects.ring(p, 0xc77dff, 2.2, 0.35);
 }
 
 function itemFx(item, p, mine) {
@@ -464,6 +555,45 @@ function itemFx(item, p, mine) {
       audio.play('whoosh', { at: p, rate: 1.3 });
       effects.burst(c, { count: 20, colors: [0xffd23f, 0xff8c3a], speed: 7, up: 1, size: 0.3, additive: true });
       break;
+    case 'balloon':
+      audio.play('bounce', { at: p, rate: 1.5 });
+      audio.play('whoosh', { at: p, rate: 0.8, volume: 0.5 });
+      effects.burst({ x: p.x, y: p.y + 2.4, z: p.z }, { count: 16, colors: [0xff4fa3, 0xffffff, 0x2ee6ff], speed: 4, up: 2, size: 0.3 });
+      break;
+    case 'mushroom':
+      audio.play('pickup', { at: p, rate: 0.55 });
+      audio.play('bounce', { at: p, rate: 0.5 });
+      effects.ring(p, 0xff2d55, 3, 0.45);
+      effects.burst(c, { count: 30, colors: [0xff2d55, 0xffffff, 0xffd23f], speed: 8, up: 4, size: 0.4, additive: true });
+      effects.addShake(mine ? 0.35 : near(p) * 0.3);
+      break;
+    case 'wall':
+      audio.play('land', { at: p, rate: 0.7 });
+      audio.play('punch', { at: p, rate: 0.5, volume: 0.6 });
+      break;
+    case 'stink':
+      audio.play('whoosh', { at: p, rate: 0.55 });
+      audio.play('slip', { at: p, rate: 0.6, volume: 0.6 });
+      effects.burst(c, { count: 26, colors: [0x8cff5a, 0x5c9e2e, 0xc6ff8a], speed: 5, up: 1, size: 0.7, endSize: 1.6, gravity: -0.5, life: 1.2 });
+      break;
+    case 'fuse':
+      audio.play('beep', { rate: 1.8, jitter: 0 });
+      audio.play('whoosh', { rate: 1.6, volume: 0.6 });
+      ui.fuseCut();
+      for (const v of S.views.values()) {
+        if (!v.state.it) continue;
+        const q = v.bomb.getWorldPosition(new THREE.Vector3());
+        effects.burst(q, { count: 18, colors: [0xffd23f, 0xff8c3a, 0xffffff], speed: 5, up: 3, size: 0.25, additive: true });
+      }
+      break;
+    case 'magnet':
+      audio.play('whoosh', { at: p, rate: 0.7 });
+      audio.play('freeze', { at: p, rate: 0.6, volume: 0.5 });
+      effects.ring(p, 0xff2d55, ITEMS.magnet.radius, 0.45, false, true);
+      effects.ring(p, 0x2ee6ff, ITEMS.magnet.radius * 0.7, 0.35, false, true);
+      effects.burst(c, { count: 20, colors: [0xff2d55, 0x2ee6ff, 0xffffff], speed: 4, up: 1, size: 0.3, additive: true });
+      effects.addShake(mine ? 0.25 : near(p) * 0.3);
+      break;
     default:
       audio.play('use', { at: p });
       effects.burst(c, { count: 14, colors: [0xffffff, 0xffd23f], speed: 4, up: 2, size: 0.3 });
@@ -481,15 +611,33 @@ function shotFx(e, mine) {
   const color = GUN_COLOR[e.item] ?? 0xffffff;
   if (!mine) {
     v?.kickGun();
-    audio.play(e.item === 'rocket' ? 'rocket' : 'shoot', { at: from, rate: e.item === 'freezeray' ? 0.7 : 1 });
+    const [sfx, rate] = GUN_SFX[e.item] || ['shoot', 1];
+    audio.play(sfx, { at: from, rate });
   }
   effects.burst(from, { count: 6, colors: [color, 0xffffff], speed: 3, up: 0, size: 0.16, life: 0.15, gravity: 0, additive: true, jitter: 0.05 });
   if (e.item === 'rocket') {
     effects.burst(from, { count: 10, colors: [0xe8e8f0, 0xc8c8d8], speed: 2, up: 0.5, size: 0.35, endSize: 1, life: 0.6, gravity: -0.5, jitter: 0.1 });
     return;
   }
+  if (e.item === 'pearl') return effects.burst(from, { count: 12, colors: [0xc77dff, 0xffd6ff], speed: 3, up: 0.5, size: 0.25, additive: true });
   if (!e.to) return;
   const to = { x: e.to[0], y: e.to[1], z: e.to[2] };
+  if (e.item === 'grapple') {
+    // the rope follows the shooter's hand while they get yanked toward the hook
+    const src = (out) => {
+      if (mine && rig.firstPerson && vm.visible) return vm.muzzleWorld(camera, out);
+      const sv = S.views.get(e.id);
+      return sv && (sv.isSelf || sv.placed) ? sv.muzzleWorld(out) : out.set(e.from[0], e.from[1], e.from[2]);
+    };
+    const caught = !!e.from && Math.hypot(...e.to.map((n, i) => n - e.from[i])) < ITEMS.grapple.range - 0.05;
+    ropes.add(src, to, caught);
+    if (caught) {
+      effects.burst(to, { count: 14, colors: [0xffffff, 0x8cff5a, 0xdddddd], speed: 5, up: 1, size: 0.22, life: 0.4, additive: true });
+      audio.play('punch', { at: to, rate: 1.6, volume: 0.6 });
+      audio.play('whoosh', { at: from, rate: 1.2 });
+    }
+    return;
+  }
   if (e.item === 'freezeray') {
     effects.beam(from, to, color, 0.13, 0.35);
     effects.beam(from, to, 0xffffff, 0.04, 0.2);
@@ -522,7 +670,7 @@ function shotFx(e, mine) {
 function blastFx(e) {
   if (!e.p) return;
   const p = { x: e.p[0], y: e.p[1], z: e.p[2] };
-  rockets.removeNear(p);
+  projectiles.removeNear(p, 'rocket');
   const r = ITEMS.rocket.radius;
   effects.burst(p, { count: 60, colors: [0xffd23f, 0xff8c3a, 0xff2d55, 0xffffff], speed: 15, up: 3, size: 0.45, life: 0.7, additive: true });
   effects.burst(p, { count: 18, colors: [0x888899, 0xa0a0b0, 0xc0c0cc], speed: 5, up: 2, size: 0.8, endSize: 1.8, life: 1.1, gravity: -1, drag: 2.5 });
@@ -537,11 +685,11 @@ function blastFx(e) {
 function useItem(self, gun, m, now) {
   const p = mover.pos;
   // the aim ray stops at players you can see too (server shot hitbox), or third person shoots past them
-  const hb = [...world.boxes];
+  const hb = [...world.solids];
   for (const v of S.views.values()) {
     if (v.isSelf || !v.root.visible) continue;
     const q = v.root.position;
-    hb.push({ min: [q.x - 0.5, q.y, q.z - 0.5], max: [q.x + 0.5, q.y + PLAYER.height * m.scale, q.z + 0.5] });
+    hb.push({ min: [q.x - 0.5, q.y, q.z - 0.5], max: [q.x + 0.5, q.y + PLAYER.height * v.scale, q.z + 0.5] });
   }
   const dir = rig.aimDir(hb, eyePos.set(p.x, p.y + PLAYER.eye * m.scale, p.z), aim);
   const r = (v) => Math.round(v * 1e4) / 1e4;
@@ -555,14 +703,15 @@ function useItem(self, gun, m, now) {
   rig.punch(big ? 0.09 : 0.035);
   self.kickGun();
   ui.crosshairKick();
-  audio.play(big ? 'rocket' : 'shoot', { rate: id === 'freezeray' ? 0.7 : 1 });
+  const [sfx, rate] = GUN_SFX[id] || ['shoot', 1];
+  audio.play(sfx, { rate });
   if (big) effects.addShake(0.2);
   mover.facing = Math.atan2(dir.x, dir.z); // face the shot so others see where it went
 }
 
 function showResults(scores) {
   S.results = scores;
-  ui.showResults(scores.map((s) => ({ ...s, bot: infoOf(s.id)?.bot })), S.myId);
+  ui.showResults(scores.map((s) => ({ ...s, bot: s.bot ?? infoOf(s.id)?.bot })), S.myId);
   ui.setMatchHud(false);
   ui.showLobby(false);
   audio.play('win', { jitter: 0 });
@@ -585,6 +734,12 @@ function respawn(fx = true) {
     poof(mover.pos);
     audio.play('whoosh');
   }
+}
+
+// fell off the map / into lava: back to a spawn, and the server scores it
+function fell() {
+  respawn();
+  net.send({ t: 'fell' });
 }
 
 function faceCenter() {
@@ -636,7 +791,7 @@ function handleMoverEvents(self) {
       case 'lava':
         audio.play('slip', { rate: 0.6 });
         effects.burst({ x: p.x, y: p.y + 0.5, z: p.z }, { count: 30, colors: [0xff5a1f, 0xffd23f, 0x555555], speed: 6, up: 5, size: 0.4, additive: true });
-        respawn();
+        fell();
         moverEvents.length = 0;
         return;
     }
@@ -644,9 +799,17 @@ function handleMoverEvents(self) {
   moverEvents.length = 0;
 }
 
+// this player's bomb fuse right now (it only burns during play), or null
+function fuseOf(v, now) {
+  const f = v?.state.fuse;
+  if (f == null) return null;
+  return S.phase === 'play' ? Math.max(0, f - (now - S.snapAt) / 1000) : f;
+}
+
 function updateGame(dt, now) {
   const self = me();
   const m = chaosMods(S.chaos);
+  tickMapClock(dt, now);
   const gunId = self && isGun(self.state.item) ? self.state.item : null;
   const orbiting = S.phase === 'results' && S.results;
   let look = { x: 0, y: 0 };
@@ -663,23 +826,30 @@ function updateGame(dt, now) {
     const canMove = !S.paused && S.phase !== 'countdown' && S.phase !== 'results';
     if (input.take('jump')) mover.jumpBuffer = 0.12;
     if (input.take('dive')) mover.wantDive = true;
+    // F: dance (tap = a couple of seconds, hold = keep going); moving stops it
+    const ax = input.axes();
+    if (input.take('dance')) mover.dancing = DANCE_TIME;
+    if (input.isDown('dance')) mover.dancing = Math.max(mover.dancing, 0.2);
+    else if ((ax.x || ax.y) && canMove) mover.dancing = 0;
     const gun = gunId && ITEMS[gunId];
     const pressed = input.take('use');
     if (pressed && gun) S.useBuf = now + 150;
     const wantUse = gun ? now < S.useBuf || input.isDown('use') : pressed;
     const stunned = mover.frozen > 0 || mover.slip > 0; // the server drops use while frozen or slipping
     if (wantUse && self.state.item && canMove && !stunned && (!gun || now >= S.nextShot)) useItem(self, gun, m, now);
-    const ax = input.axes();
     const dir = rig.moveDir(ax.x, ax.y);
     const inp = { x: dir.x, z: dir.z, locked: !canMove };
 
+    // fixed steps, each with the map (moving boxes) at the time the step ends
+    mover.boxes = world.solids;
     S.physAcc = Math.min(S.physAcc + dt, 0.25);
     while (S.physAcc >= STEP) {
-      mover.step(STEP, inp, m, moverEvents);
       S.physAcc -= STEP;
+      setMapTime(world.map, S.mt - S.physAcc);
+      mover.step(STEP, inp, m, moverEvents);
       if (mover.pos.y < world.map.killY) {
         moverEvents.length = 0;
-        respawn();
+        fell();
       }
       if (moverEvents.length) handleMoverEvents(self);
     }
@@ -703,6 +873,7 @@ function updateGame(dt, now) {
       net.send({ t: 's', p: [r(p.x), r(p.y), r(p.z)], ry: r(mover.facing % (Math.PI * 2)), a: mover.anim(), tp: S.tpSeq });
     }
   }
+  world.setTime(S.mt - STEP); // what's drawn: own player renders one step behind its physics
 
   // remote players
   for (const v of S.views.values()) {
@@ -718,17 +889,20 @@ function updateGame(dt, now) {
     v.onPad = !!pad;
   }
 
-  rockets.update(dt, now);
+  projectiles.update(dt, now);
 
   // views
   if (self) self.hideBody = rig.firstPerson && !orbiting;
-  const fuseNow = S.fuse != null ? Math.max(0, S.fuse - (now - S.snapAt) / 1000) : null;
   const runRate = Math.max(0.6, Math.hypot(mover.vel.x, mover.vel.z) / 9);
   for (const v of S.views.values()) {
-    v.update(dt, { scale: m.scale, fuse: fuseNow, darkness: world.darkness, runRate: v.isSelf ? runRate : 1, countdown: S.phase === 'countdown' });
+    v.update(dt, { scale: m.scale, fuse: fuseOf(v, now), darkness: world.darkness, runRate: v.isSelf ? runRate : 1, countdown: S.phase === 'countdown' });
   }
 
-  updateHud(now, fuseNow, m, gunId);
+  // dizzy (stink cloud): wobbly camera
+  const dizzy = mover.dizzy > 0 || !!self?.state.fx.includes('dizzy');
+  S.dizzyK += ((dizzy ? 1 : 0) - S.dizzyK) * Math.min(1, dt * 3);
+
+  updateHud(now, m, gunId);
 
   // camera
   if (orbiting) {
@@ -736,15 +910,19 @@ function updateGame(dt, now) {
     if (w) orbitCamera(w.root.position, now / 1000, 5.5, 1.6);
   } else if (self) {
     const boosting = self.state.fx.includes('boost') || mover.boost > 0;
-    rig.update(dt, self.root.position, self.scale, world.boxes, prefs.fov, effects.shake, (boosting ? 10 : 0) + (m.speed > 1 ? 6 : 0), !!gunId);
+    const t = now / 1000;
+    const shake = { ...effects.shake, roll: effects.shake.roll + Math.sin(t * 2.6) * 0.13 * S.dizzyK };
+    const fov = (boosting ? 10 : 0) + (m.speed > 1 ? 6 : 0) + Math.sin(t * 1.9) * 6 * S.dizzyK;
+    rig.update(dt, self.root.position, self.scale, world.solids, prefs.fov, shake, fov, !!gunId);
   }
+  ropes.update(dt);
 
   // first-person gun
   vm.set(self && rig.firstPerson && !orbiting ? gunId : null);
   vm.update(dt, look, Math.hypot(mover.vel.x, mover.vel.z), mover.grounded, world.darkness);
 }
 
-function updateHud(now, fuseNow, m, gunId) {
+function updateHud(now, m, gunId) {
   const self = me();
   const match = S.phase === 'countdown' || S.phase === 'play';
   const timeNow = S.time != null ? Math.max(0, S.time - (now - S.snapAt) / 1000) : null;
@@ -753,13 +931,17 @@ function updateHud(now, fuseNow, m, gunId) {
   else ui.setTimer(null);
   if (S.phase === 'results') ui.setResultsTimer(timeNow ?? 0);
 
-  let it = null;
-  for (const v of S.views.values()) if (v.state.it) it = v;
-  const iAmIt = !!(it && it.isSelf && match);
-  ui.setFuse(match && it ? fuseNow : null, S.fuseMax);
-  ui.setItLabel(match && it ? infoOf(it.id) : null, iAmIt);
+  // bombs: your own fuse if you're IT, else the one about to blow
+  const its = [...S.views.values()].filter((v) => v.state.it);
+  const iAmIt = match && !!self?.state.it;
+  let shown = iAmIt ? self : null;
+  if (!iAmIt) for (const v of its) if (!shown || fuseOf(v, now) < fuseOf(shown, now)) shown = v;
+  const fuseNow = match && shown ? fuseOf(shown, now) : null;
+  ui.setFuse(fuseNow, shown?.fuseMax, its.length);
+  ui.setItLabel(match ? its.filter((v) => !v.isSelf).map((v) => infoOf(v.id)).filter(Boolean) : [], iAmIt);
   ui.setYouAreIt(iAmIt);
   ui.setFrozenVignette(!!self && S.phase !== 'countdown' && (self.state.fx.includes('frozen') || mover.frozen > 0));
+  ui.setDizzyVignette(S.dizzyK > 0.3);
 
   if (self) {
     ui.setScore(self.state.score);
@@ -773,7 +955,7 @@ function updateHud(now, fuseNow, m, gunId) {
   } else ui.chaosBadge(null);
 
   // fuse ticking: faster near zero, louder for IT
-  if (S.phase === 'play' && fuseNow != null && it && now >= S.nextBeep) {
+  if (S.phase === 'play' && fuseNow != null && now >= S.nextBeep) {
     const interval = fuseNow < 3 ? 0.22 : fuseNow < 6 ? 0.5 : 1;
     if (iAmIt || fuseNow < 6) audio.play('beep', { volume: iAmIt ? 0.45 : 0.18, rate: fuseNow < 3 ? 1.5 : 1.2, jitter: 0 });
     S.nextBeep = now + interval * 1000;
@@ -799,7 +981,7 @@ function orbitCamera(p, t, radius, height) {
   orbitDir.set(Math.sin(a) * radius, height - 1.2, Math.cos(a) * radius);
   const len = orbitDir.length();
   orbitDir.divideScalar(len);
-  const dist = Math.max(1.5, Math.min(len, raycastBoxes(world.boxes || [], head, orbitDir, len + 0.3) - 0.3));
+  const dist = Math.max(1.5, Math.min(len, raycastBoxes(world.solids || [], head, orbitDir, len + 0.3) - 0.3));
   camera.position.copy(head).addScaledVector(orbitDir, dist);
   const right = new THREE.Vector3(Math.cos(a), 0, -Math.sin(a));
   const look = new THREE.Vector3(p.x, p.y + 1.1, p.z).addScaledVector(right, -1.5);
@@ -818,8 +1000,10 @@ function frame(now) {
   last = now;
   if (S.screen === 'loading') return;
 
-  if (S.screen === 'game') updateGame(dt, now);
-  else if (S.preview) {
+  if (S.screen === 'game') {
+    updateGame(dt, now);
+    world.assignLights([...S.views.values()], camera.position);
+  } else if (S.preview) {
     S.preview.root.rotation.y = 0;
     S.preview.update(dt, { scale: 1, fuse: null, darkness: 0 });
     orbitCamera(S.preview.root.position, now / 1000, 5.2, 1.5);
@@ -871,6 +1055,7 @@ ui.initUI({
     }
   },
   start: () => net.send({ t: 'start' }),
+  gameSettings: (st) => net.send({ t: 'settings', items: st.items, round: st.round, chaos: st.chaos }),
   bot: (add) => net.send({ t: 'bot', add }),
   map: (map) => net.send({ t: 'map', map }),
   pause: () => openPause(),

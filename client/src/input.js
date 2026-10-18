@@ -14,6 +14,7 @@ const BINDS = {
   ShiftLeft: 'dive', ShiftRight: 'dive',
   KeyE: 'use',
   KeyV: 'view',
+  KeyF: 'dance',
   Tab: 'scores',
 };
 

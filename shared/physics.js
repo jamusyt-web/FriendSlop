@@ -1,17 +1,30 @@
 // Own-player movement: AABB vs map boxes, per-axis resolution, step-up, double jump, dive,
-// bounce / ice / lava, chaos mods and server fx (knock, freeze, slip, boost, tp).
+// bounce / ice / lava / conveyors, riding moving boxes, chaos mods and server fx (knock, freeze, slip, boost,
+// float, dizzy, tp). Blinked-out boxes (`off`) are ignored everywhere.
 import { MOVE, PLAYER } from './config.js';
+import { ITEMS } from './items.js';
 
 const R = PLAYER.radius;
 const H = PLAYER.height;
 const EPS = 1e-4;
 const SKIN = 0.05; // tolerance for "standing on" a top face
 const MAX_FALL = 50;
+const ZERO = [0, 0, 0];
+const LOOKAHEAD = 0.1; // s: a moving box prefers pushing you where it will be, so it never tunnels through you
+
+// Velocity a floor carries its riders with: moving box (dv) + conveyor belt (push). null if neither.
+const floorVel = (b) => {
+  if (!b || b.off || !(b.dv || b.push)) return null;
+  const dv = b.dv || ZERO;
+  const push = b.push || ZERO;
+  return [dv[0] + push[0], dv[1], dv[2] + push[1]];
+};
 
 // Ray vs boxes (slab test). Returns distance to first hit or maxT.
 export function raycastBoxes(boxes, o, d, maxT) {
   let best = maxT;
   for (const b of boxes) {
+    if (b.off) continue;
     let t0 = 0;
     let t1 = best;
     let hit = true;
@@ -44,7 +57,7 @@ export function raycastBoxes(boxes, o, d, maxT) {
 export function groundBelow(boxes, x, z, y) {
   let top = -Infinity;
   for (const b of boxes) {
-    if (x > b.min[0] && x < b.max[0] && z > b.min[2] && z < b.max[2] && b.max[1] <= y + SKIN && b.max[1] > top) top = b.max[1];
+    if (!b.off && x > b.min[0] && x < b.max[0] && z > b.min[2] && z < b.max[2] && b.max[1] <= y + SKIN && b.max[1] > top) top = b.max[1];
   }
   return top;
 }
@@ -81,19 +94,26 @@ export class Mover {
     this.slip = 0;
     this.boost = 0;
     this.boostSpeed = 1;
+    this.float = 0; // balloon: low gravity
+    this.dizzy = 0; // stink: reversed controls
+    this.dancing = 0; // emote timer set by the caller
     this.smoothY = 0; // visual offset that hides step-up pops
     this.airTime = 0;
   }
 
-  // Effect timers survive (the server keeps them through swaps and respawns). y is used as is: positions
-  // are rounded to 0.01 and map faces sit on that grid, so a reported spot never ends up inside a box.
+  // Effect timers survive (the server keeps them through swaps and respawns). A spot inside a box (moving
+  // platform moved on, pearl in a wall) is fixed up: onto its top if that's a short climb, else nudged out.
   teleport(p) {
-    const { frozen, slip, boost, boostSpeed } = this;
+    const { frozen, slip, boost, boostSpeed, float, dizzy } = this;
     this.reset();
-    Object.assign(this, { frozen, slip, boost, boostSpeed });
-    this.pos.x = this.prev.x = p[0];
-    this.pos.y = this.prev.y = p[1];
-    this.pos.z = this.prev.z = p[2];
+    Object.assign(this, { frozen, slip, boost, boostSpeed, float, dizzy });
+    this.pos.x = p[0];
+    this.pos.y = p[1];
+    this.pos.z = p[2];
+    this.unstick(true);
+    this.prev.x = this.pos.x;
+    this.prev.y = this.pos.y;
+    this.prev.z = this.pos.z;
   }
 
   // inp: {x, z} world-space wish direction (length <= 1), locked: bool. Returns list of events.
@@ -109,13 +129,27 @@ export class Mover {
     this.frozen -= dt;
     this.slip -= dt;
     this.boost -= dt;
+    this.float -= dt;
+    this.dizzy -= dt;
+    this.dancing -= dt;
     this.slide -= dt;
     this.smoothY *= Math.exp(-dt * 14);
+
+    // ride the floor: lifts carry us on all axes, conveyors push us. Own velocity is relative to the floor.
+    // Boxes moved since last step, so get out of any we're in first: the sweeps below assume we start outside.
+    const floor = this.grounded ? this.ground : null;
+    const fv0 = floorVel(floor);
+    if (fv0 && floor.dv && this.overlapsXZ(floor)) p.y = floor.max[1]; // stick to lifts going up or down
+    this.unstick(false);
+    if (fv0) {
+      this.moveH('x', 0, fv0[0] * dt, true);
+      this.moveH('z', 2, fv0[2] * dt, true);
+    }
 
     const control = !inp.locked && this.frozen <= 0 && this.slip <= 0;
     let wx = control ? inp.x : 0;
     let wz = control ? inp.z : 0;
-    if (mods.reverse) {
+    if (!!mods.reverse !== this.dizzy > 0) { // backwards day + dizzy cancel out
       wx = -wx;
       wz = -wz;
     }
@@ -191,7 +225,8 @@ export class Mover {
       }
     }
 
-    v.y = Math.max(v.y - MOVE.gravity * mods.gravity * dt, -MAX_FALL);
+    const gravity = mods.gravity * (this.float > 0 ? ITEMS.balloon.gravity : 1);
+    v.y = Math.max(v.y - MOVE.gravity * gravity * dt, -MAX_FALL);
 
     // move per axis
     const wasGrounded = this.grounded;
@@ -211,7 +246,7 @@ export class Mover {
         events.push({ k: 'land', speed: fallSpeed });
       }
       if (this.ground.kind === 'bounce') {
-        v.y = MOVE.bounce * Math.sqrt(mods.gravity);
+        v.y = MOVE.bounce * Math.sqrt(gravity);
         this.grounded = false;
         this.jumpsLeft = 1;
         events.push({ k: 'bounce', box: this.ground });
@@ -223,6 +258,16 @@ export class Mover {
     } else {
       this.airTime += dt;
       if (wasGrounded && v.y <= 0) this.coyote = 0.1;
+    }
+
+    // stepped on/off a moving floor (jump, walk off, land): keep world momentum
+    const fv1 = this.grounded ? floorVel(this.ground) : null;
+    if (fv0 || fv1) {
+      const a = fv0 || ZERO;
+      const b = fv1 || ZERO;
+      v.x += a[0] - b[0];
+      v.z += a[2] - b[2];
+      if (!this.grounded) v.y += Math.max(0, a[1]); // jumping off a rising lift goes higher
     }
 
     // facing
@@ -242,17 +287,58 @@ export class Mover {
     const p = this.pos;
     p[axis] += d;
     for (const b of this.boxes) {
-      if (!this.overlaps(b, 0)) continue;
+      if (b.off || !this.overlaps(b, 0)) continue;
       const rise = b.max[1] - p.y;
       // full steps when grounded; tiny lips (ice strips, pads) always, so we never get shoved sideways off them
       const stepOk = (canStep && this.vel.y <= 0 && rise <= MOVE.stepHeight + 0.01) || rise <= 0.15;
-      if (rise > 0 && stepOk && this.fits(b.max[1])) {
+      if (rise > 0 && stepOk && this.standAt('y', b.max[1] + EPS) !== null) {
         p.y = b.max[1];
         this.smoothY -= rise;
         continue;
       }
       p[axis] = d > 0 ? b.min[i] - R - EPS : b.max[i] + R + EPS;
-      this.vel[axis] = 0;
+      if (this.vel[axis] * d > 0) this.vel[axis] = 0; // a floor carrying us into a wall doesn't eat our own speed
+    }
+  }
+
+  // Get out of any box we are inside (pushers, lifts, pop-up walls, blink tiles coming back, teleports):
+  // cheapest way out that fits, biased toward where the box is going so pushers push instead of letting us
+  // tunnel through. `lift` favors climbing on top (teleports).
+  unstick(lift) {
+    const p = this.pos;
+    const v = this.vel;
+    for (let n = 0; n < 4; n++) {
+      const b = this.inside();
+      if (!b) return;
+      const dv = b.dv || ZERO;
+      const ways = [
+        ['x', 0, b.max[0] + R + EPS], ['x', 0, b.min[0] - R - EPS],
+        ['y', 1, b.max[1]], ['y', 1, b.min[1] - H - EPS],
+        ['z', 2, b.max[2] + R + EPS], ['z', 2, b.min[2] - R - EPS],
+      ].map(([axis, i, to]) => {
+        const d = to - p[axis];
+        const cost = Math.abs(d) - Math.sign(d) * dv[i] * LOOKAHEAD - (lift && i === 1 && d > 0 ? H : 0);
+        return { axis, i, to, d, cost };
+      });
+      const up = ways[2];
+      let way = up; // nothing fits (crushed): climb on top
+      let y = up.to;
+      for (const w of ways.sort((a, c) => a.cost - c.cost)) {
+        const at = this.standAt(w.axis, w.to);
+        if (at !== null) {
+          way = w;
+          y = at;
+          break;
+        }
+      }
+      if (way.i !== 1) {
+        p[way.axis] = way.to;
+        this.smoothY -= y - p.y; // stepped onto a belt / step on the way out
+      }
+      p.y = y;
+      if (way === up) {
+        if (v.y < dv[1]) v.y = Math.min(v.y, 0); // landed on it: riding takes over next step
+      } else if ((v[way.axis] - dv[way.i]) * way.d < 0) v[way.axis] = dv[way.i]; // shoved: move with the box
     }
   }
 
@@ -267,7 +353,7 @@ export class Mover {
       let top = -Infinity;
       let hit = null;
       for (const b of this.boxes) {
-        if (!this.overlapsXZ(b)) continue;
+        if (b.off || !this.overlapsXZ(b)) continue;
         const t = b.max[1];
         if (t <= y0 + SKIN && t >= y1 - EPS && t > top) {
           top = t;
@@ -283,7 +369,7 @@ export class Mover {
     } else {
       let bottom = Infinity;
       for (const b of this.boxes) {
-        if (!this.overlapsXZ(b)) continue;
+        if (b.off || !this.overlapsXZ(b)) continue;
         const t = b.min[1];
         if (t >= y0 + H - SKIN && t <= y1 + H && t < bottom) bottom = t;
       }
@@ -308,23 +394,29 @@ export class Mover {
     );
   }
 
-  fits(y) {
-    const save = this.pos.y;
-    this.pos.y = y + EPS;
-    let ok = true;
-    for (const b of this.boxes) {
-      if (this.overlaps(b, 0)) {
-        ok = false;
-        break;
-      }
+  // first box the player is inside, if any
+  inside() {
+    return this.boxes.find((b) => !b.off && this.overlaps(b, 0));
+  }
+
+  // y the player fits at with pos[axis] = to, or null. Sideways moves step up onto low lips like walking does.
+  standAt(axis, to) {
+    const p = this.pos;
+    const { x, y, z } = p;
+    p[axis] = to;
+    if (axis !== 'y') {
+      for (const b of this.boxes) if (!b.off && this.overlaps(b, 0) && b.max[1] - y <= MOVE.stepHeight + 0.01) p.y = Math.max(p.y, b.max[1]);
     }
-    this.pos.y = save;
-    return ok;
+    const at = this.inside() ? null : p.y;
+    p.x = x;
+    p.y = y;
+    p.z = z;
+    return at;
   }
 
   touchingLava() {
     if (this.ground?.kind === 'lava') return true;
-    for (const b of this.boxes) if (b.kind === 'lava' && this.overlaps(b, 0.03)) return true;
+    for (const b of this.boxes) if (b.kind === 'lava' && !b.off && this.overlaps(b, 0.03)) return true;
     return false;
   }
 
@@ -332,6 +424,8 @@ export class Mover {
     if (this.slip > 0) return 'slip';
     if (this.diving || this.slide > 0) return 'dive';
     if (!this.grounded && this.airTime > 0.06) return this.vel.y > 0 ? 'jump' : 'fall';
-    return Math.hypot(this.vel.x, this.vel.z) > 1 ? 'run' : 'idle';
+    const speed = Math.hypot(this.vel.x, this.vel.z);
+    if (this.dancing > 0 && speed < 1) return 'dance';
+    return speed > 1 ? 'run' : 'idle';
   }
 }

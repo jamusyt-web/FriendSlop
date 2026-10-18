@@ -34,6 +34,19 @@ const stairs = (x, z, dx, dz, top, width = 3, color) => {
   }
   return out;
 };
+const belt = (x, z, w, d, y, h, push, color = 0x2b2d42) => ({ ...box(x, z, w, d, y, h, 'conveyor', color), push });
+const moving = (b, to, period, phase = 0) => ({ ...b, move: { to, period, phase } });
+const blinking = (b, period, on, phase = 0) => ({ ...b, blink: { period, on, phase } });
+// 3x3 elevator resting on the ground (top 0.4), rides up until its top is at `top`
+const lift = (x, z, top, period, phase, color = 0xffc300) => moving(box(x, z, 3, 3, 0, 0.4, 'solid', color), [0, top - 0.4, 0], period, phase);
+// square conveyor loop around the center, half-size a, belts `w` wide at height y, clockwise from above.
+// Each belt includes the corner where it starts, so riders turn the corner instead of shooting off it.
+const loop = (a, w, y, h, speed, color) => [
+  belt(-w / 2, -a, a * 2, w, y, h, [speed, 0], color),
+  belt(a, -w / 2, w, a * 2, y, h, [0, speed], color),
+  belt(w / 2, a, a * 2, w, y, h, [-speed, 0], color),
+  belt(-a, w / 2, w, a * 2, y, h, [0, -speed], color),
+];
 
 // ---------- 1. Bounce Castle: open playground, central keep, bridges ----------
 const castle = (() => {
@@ -161,7 +174,179 @@ const lava = (() => {
   };
 })();
 
-export const MAPS = { castle, sky, maze, lava };
+// ---------- 5. Slop Factory: conveyor loop, piston lane over a slime trough, elevators to catwalks ----------
+const factory = (() => {
+  const F = 0x5c6370, W = 0x8d99ae, Y = 0xffc300, K = 0xc68b59, P = 0xe63946, M = 0x457b9d;
+  const crate = (x, z, h, w = 2) => box(x, z, w, 2, 0, h, 'solid', K);
+  return {
+    name: 'Slop Factory',
+    size: 'M',
+    sky: 0x3d3b4f,
+    killY: -20,
+    boxes: [
+      box(0, 0, 56, 56, -1, 1, 'solid', F),
+      ...walls(28, 10, W),
+      box(0, -26.5, 56, 3, 4.6, 0.4, 'solid', Y), // catwalks, top 5
+      box(0, 26.5, 56, 3, 4.6, 0.4, 'solid', Y),
+      box(-26.5, 0, 3, 56, 4.6, 0.4, 'solid', Y),
+      box(26.5, 0, 3, 56, 4.6, 0.4, 'solid', Y),
+      lift(-23.5, 0, 5, 7, 0), // elevators up to the side catwalks
+      lift(23.5, 0, 5, 7, 0.5),
+      ...loop(10, 3, 0, 0.15, 4), // conveyor loop around the machine
+      box(0, 0, 6, 6, 0, 3, 'solid', M), // machine, top 3
+      ...stairs(0, 3, 0, 1, 3, 3, M),
+      pad(-5.5, 0),
+      // piston lane: belt runs east past pistons that shove you across into the slime
+      belt(0, 17.5, 44, 3, 0, 0.15, [3, 0]),
+      ...[-15, -5, 5, 15].map((x, i) => moving(box(x, 13.5, 4, 2, 0, 1.6, 'solid', P), [0, 0, 5.3], 3.2, i * 0.25)),
+      box(0, 20.8, 40, 2, 0, 0.1, 'lava'),
+      // launch belts: ride north onto a pad that throws you up to the catwalk
+      belt(-18, -16, 3, 12, 0, 0.15, [0, -4]), pad(-18, -23),
+      belt(18, -16, 3, 12, 0, 0.15, [0, -4]), pad(18, -23),
+      crate(-8, -23.5, 1.2), crate(-6, -23.5, 2.4), crate(-4, -23.5, 3.6), // climb to the north catwalk
+      crate(-12, -18, 1.2), crate(12, -18, 1.2), crate(0, -18, 2.4, 4),
+      crate(-24, 8, 1.2), crate(24, -8, 1.2), crate(-24, -6, 2.4), crate(24, 6, 2.4),
+    ],
+    spawns: [[-18, 0, -6], [18, 0, 6], [-18, 0, 6], [18, 0, -6], [0, 0, -6], [6, 0, 0], [-6, 0, -18], [6, 0, -18], [-22, 0, -14], [22, 0, -14]],
+    items: [[0, 3, 0], [0, 5, -26.5], [0, 5, 26.5], [0, 0, 23.5], [-12, 1.2, -18], [24, 0, 14], [-24, 0, 14], [26.5, 5, -14]],
+  };
+})();
+
+// ---------- 6. Disco Drop: blinking dance floor over the void ----------
+const disco = (() => {
+  const SAFE = 0xf8f8ff, colors = [0xff3cac, 0x2bd2ff, 0xfff35c, 0x7cff6b, 0xa45cff, 0xff9f1c];
+  const spawnTiles = ['0,0', '0,8', '8,0', '8,8', '0,4', '4,0', '8,4', '4,8'];
+  const boxes = [];
+  for (let i = 0; i < 9; i++) {
+    for (let j = 0; j < 9; j++) {
+      const x = (i - 4) * 4;
+      const z = (j - 4) * 4;
+      const ring = Math.max(Math.abs(i - 4), Math.abs(j - 4));
+      if (ring <= 1 || spawnTiles.includes(`${i},${j}`)) {
+        boxes.push(box(x, z, 4, 4, -0.5, 0.5, 'solid', SAFE)); // white tiles never blink
+        continue;
+      }
+      const tile = box(x, z, 4, 4, -0.5, 0.5, 'solid', colors[(i + j * 2) % colors.length]);
+      if (ring === 2) boxes.push(blinking(tile, 5, 0.6, ((i + j) % 2) * 0.5)); // checkerboard
+      else if (ring === 3) boxes.push(blinking(tile, 12, 0.7, Math.atan2(z, x) / (Math.PI * 2) + 0.5)); // radar sweep
+      else boxes.push(blinking(tile, 8, 0.7, j / 9)); // rows sweeping
+    }
+  }
+  return {
+    name: 'Disco Drop',
+    size: 'M',
+    sky: 0x1b0f3b,
+    killY: -15,
+    boxes: [
+      ...boxes,
+      box(0, 0, 4, 2, 0, 1.2, 'solid', 0x222244), // DJ booth
+      pad(4, 4),
+      box(10, 10, 4, 4, 5.6, 0.4, 'solid', SAFE), // floating stage, top 6
+      box(27, 0, 4, 4, -0.5, 0.5, 'solid', SAFE), // outer islands, reached by ferry
+      box(-27, 0, 4, 4, -0.5, 0.5, 'solid', SAFE),
+      moving(box(19.5, 0, 3, 3, -0.5, 0.5, 'solid', 0xff3cac), [4, 0, 0], 6),
+      moving(box(-19.5, 0, 3, 3, -0.5, 0.5, 'solid', 0x2bd2ff), [-4, 0, 0], 6, 0.5),
+    ],
+    spawns: [[-16, 0, -16], [-16, 0, 16], [16, 0, -16], [16, 0, 16], [-16, 0, 0], [0, 0, -16], [16, 0, 0], [0, 0, 16]],
+    items: [[0, 1.2, 0], [-4, 0, 4], [4, 0, -4], [27, 0, 0], [-27, 0, 0], [10, 6, 10]],
+  };
+})();
+
+// ---------- 7. Slop City: big city blocks, rooftops, elevators, conveyor highway ----------
+const city = (() => {
+  const R = 0x575d6b, W = 0x3d405b, colors = [0xe07a5f, 0x3d5a80, 0x98c1d9, 0xf2cc8f, 0x81b29a, 0xb5838d, 0xffb4a2, 0x6d597a];
+  const bld = (x, z, w, d, h, c) => box(x, z, w, d, 0, h, 'solid', colors[c]);
+  return {
+    name: 'Slop City',
+    size: 'L',
+    sky: 0xa8dadc,
+    killY: -20,
+    boxes: [
+      box(0, 0, 120, 120, -1, 1, 'solid', R),
+      ...walls(60, 8, W),
+      // towers, top 16, with an elevator each
+      bld(0, -48, 10, 10, 16, 7), lift(-6.5, -48, 16, 12, 0),
+      bld(0, 48, 10, 10, 16, 7), lift(6.5, 48, 16, 12, 0.5),
+      // tall blocks, top 12, elevators facing the plaza
+      bld(-48, 0, 14, 14, 12, 1), lift(-39.5, 0, 12, 10, 0),
+      bld(48, 0, 14, 14, 12, 1), lift(39.5, 0, 12, 10, 0.5),
+      // plaza neighbors, top 4.2, stairs from the plaza
+      bld(-24, 0, 14, 14, 4.2, 3), ...stairs(-17, 0, 1, 0, 4.2, 3, colors[3]),
+      bld(24, 0, 14, 14, 4.2, 3), ...stairs(17, 0, -1, 0, 4.2, 3, colors[3]),
+      box(0, 0, 6, 6, 0, 0.6, 'solid', 0x98c1d9), pad(0, 0, 0.6), // fountain
+      box(0, -24, 4, 4, 0, 2.4, 'solid', 0xf4a261), box(0, 24, 4, 4, 0, 2.4, 'solid', 0xf4a261), // kiosks
+      ...corners((sx, sz) => [
+        // outer rows: two roofs at 7.2 joined by a sky bridge, pad up from the street
+        bld(sx * 48, sz * 48, 14, 14, 7.2, 0), bld(sx * 24, sz * 48, 14, 14, 7.2, 4),
+        box(sx * 36, sz * 48, 10, 3, 6.8, 0.4, 'solid', 0xffffff), pad(sx * 14, sz * 48),
+        // side blocks, top 4.8, stairs from the street
+        bld(sx * 48, sz * 24, 14, 14, 4.8, 2), ...stairs(sx * 41, sz * 24, -sx, 0, 4.8, 3, colors[2]),
+        // two buildings split by a hiding alley; pad to the low roof, roof pad to the high one
+        bld(sx * 20, sz * 24, 6, 14, 6, 5), bld(sx * 28, sz * 24, 6, 14, 9.6, 6),
+        pad(sx * 14, sz * 24), pad(sx * 20, sz * 28, 6),
+      ]),
+      // two-lane conveyor highway
+      belt(0, 34.5, 112, 3, 0, 0.15, [6, 0]),
+      belt(0, 37.5, 112, 3, 0, 0.15, [-6, 0]),
+    ],
+    spawns: [
+      [12, 0, 12], [-12, 0, 12], [12, 0, -12], [-12, 0, -12], [36, 0, 12], [-36, 0, 12], [36, 0, -12], [-36, 0, -12],
+      [12, 0, -36], [-12, 0, -36], [36, 0, -36], [-36, 0, -36], [12, 0, 40], [-12, 0, 40], [36, 0, 40], [-36, 0, 40],
+    ],
+    items: [
+      [0, 16, -48], [0, 16, 48], [-48, 12, 0], [48, 12, 0], [8, 0, 8], [-8, 0, -8], [24, 0, 24], [-24, 0, -24],
+      [24, 7.2, -48], [-24, 7.2, 48], [48, 7.2, 48], [-48, 7.2, -48], [48, 4.8, -24], [-48, 4.8, 24],
+    ],
+  };
+})();
+
+// ---------- 8. Splash Park: lava river with ferries, rising lava pool, coaster ring, bouncy castle ----------
+const park = (() => {
+  const G = 0x7bd389, F = 0xf6f1d1, C = 0xff006e, T = 0x5e60ce, S = 0xc9ada7, P = 0xff8fab, Q = 0xffc8dd;
+  return {
+    name: 'Splash Park',
+    size: 'L',
+    sky: 0x9bf6ff,
+    killY: -20,
+    boxes: [
+      box(0, -28.5, 100, 43, -1, 1, 'solid', G), // north and south lawns
+      box(0, 28.5, 100, 43, -1, 1, 'solid', G),
+      box(0, 0, 100, 14, -3, 2.4, 'lava'), // river, top -0.6
+      ...walls(50, 4, F),
+      box(-32, 0, 4, 14, -0.5, 0.5, 'solid', S), box(32, 0, 4, 14, -0.5, 0.5, 'solid', S), // bridges
+      ...[-16, 0, 16].map((x, i) => moving(box(x, -5, 4, 4, -0.5, 0.5, 'solid', 0xffbe0b), [0, 0, 10], 7, i / 3)), // ferries
+      // lava pool: level rises over the stepping stones, the center pillar stays dry
+      box(-28, -35.5, 16, 1, 0, 0.6, 'solid', S), box(-28, -20.5, 16, 1, 0, 0.6, 'solid', S),
+      box(-35.5, -28, 1, 14, 0, 0.6, 'solid', S), box(-20.5, -28, 1, 14, 0, 0.6, 'solid', S),
+      moving(box(-28, -28, 14, 14, -1.4, 1.6, 'lava'), [0, 1.2, 0], 10),
+      box(-32, -28, 2, 2, 0, 0.9, 'solid', S), box(-24, -28, 2, 2, 0, 0.9, 'solid', S),
+      box(-28, -32, 2, 2, 0, 0.9, 'solid', S), box(-28, -24, 2, 2, 0, 0.9, 'solid', S),
+      box(-28, -28, 2, 2, 0, 2, 'solid', Q),
+      // drop tower with an elevator, top 14
+      box(28, -28, 6, 6, 0, 14, 'solid', T), lift(23.5, -28, 14, 12, 0),
+      // bouncy castle: pads everywhere, turrets on the corners
+      box(-28, 28, 14, 14, 0, 0.6, 'solid', P),
+      ...[-32, -28, -24].flatMap((x) => [24, 28, 32].map((z) => pad(x, z, 0.6))),
+      ...[[-34, 22], [-22, 22], [-34, 34], [-22, 34]].map(([x, z]) => box(x, z, 2, 2, 0.6, 4, 'solid', Q)),
+      // coaster: raised conveyor ring, top 3, stairs up from the lawns
+      ...loop(40, 3, 2.6, 0.4, 7, C),
+      ...corners((sx, sz) => [box(sx * 40, sz * 40, 1, 1, 0, 2.6, 'solid', F)]),
+      ...stairs(0, 38.5, 0, -1, 3, 3, F), ...stairs(0, -38.5, 0, 1, 3, 3, F),
+      // picnic tables
+      ...corners((sx, sz) => [box(28 + sx * 4, 28 + sz * 4, 3, 1.2, 0, 0.8, 'solid', 0xb08968)]),
+    ],
+    spawns: [
+      [-10, 0, -15], [10, 0, -15], [0, 0, -26], [-14, 0, -32], [14, 0, -32], [-28, 0, -14], [28, 0, -14], [-45, 0, -20],
+      [-10, 0, 15], [10, 0, 15], [0, 0, 26], [-14, 0, 32], [14, 0, 32], [28, 0, 16], [-28, 0, 14], [45, 0, 20],
+    ],
+    items: [
+      [-28, 2, -28], [28, 14, -28], [-34, 4.6, 34], [-22, 4.6, 22], [40, 3, 0], [-40, 3, 0],
+      [32, 0, 0], [-32, 0, 0], [28, 0, 28], [0, 0, -14], [0, 0, 14], [-30, 0.6, 26],
+    ],
+  };
+})();
+
+export const MAPS = { castle, sky, maze, lava, factory, disco, city, park };
 export const MAP_IDS = Object.keys(MAPS);
 
 const BLINK_WARN = 0.75; // seconds of `warn` before a blinking box switches off

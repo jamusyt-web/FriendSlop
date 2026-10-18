@@ -156,8 +156,8 @@ export class Effects {
     (additive ? this.sparks : this.puffs).spawn(pos.x, pos.y, pos.z, 0, 0.3, 0, life, size, 0, tmpColor, 1, 0);
   }
 
-  // expanding flat ring (or sphere) that fades out
-  ring(pos, color, radius = 3, life = 0.5, sphere = false) {
+  // expanding flat ring (or sphere) that fades out; inward: shrinks from radius to nothing (magnet pull)
+  ring(pos, color, radius = 3, life = 0.5, sphere = false, inward = false) {
     const mat = new THREE.MeshBasicMaterial({
       color,
       transparent: true,
@@ -170,7 +170,7 @@ export class Effects {
     if (!sphere) m.rotation.x = -Math.PI / 2;
     m.scale.setScalar(0.01);
     this.scene.add(m);
-    this.shapes.push({ m, life, max: life, radius, opacity: mat.opacity });
+    this.shapes.push({ m, life, max: life, radius, opacity: mat.opacity, inward });
   }
 
   // glowing line from a to b that thins and fades out (gun tracers)
@@ -208,7 +208,7 @@ export class Effects {
       const t = 1 - s.life / s.max;
       const e = 1 - Math.pow(1 - t, 3);
       if (s.width) s.m.scale.x = s.m.scale.z = s.width * (1 - t * 0.8);
-      else s.m.scale.setScalar(Math.max(0.01, s.radius * e));
+      else s.m.scale.setScalar(Math.max(0.01, s.radius * (s.inward ? 1 - e : e)));
       s.m.material.opacity = s.opacity * (1 - t);
       if (s.life <= 0) {
         this.scene.remove(s.m);

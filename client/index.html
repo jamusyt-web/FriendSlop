@@ -36,7 +36,7 @@
         </div>
         <button id="btn-menu-settings" class="btn ghost">⚙ Settings</button>
       </div>
-      <div class="menu-foot">2–8 players · WASD + mouse · don't hold the bomb</div>
+      <div class="menu-foot">2–16 players · WASD + mouse · don't hold the bomb</div>
     </div>
 
     <!-- connecting -->
@@ -55,7 +55,7 @@
       <div id="hud-top">
         <div id="timer" class="pill hidden">2:30</div>
         <div id="fuse" class="hidden">
-          <span class="bomb-icon">💣</span>
+          <span class="bomb-icon">💣</span><span class="bomb-count"></span>
           <div class="fuse-bar"><i></i><b class="spark"></b></div>
           <span class="fuse-num">0.0</span>
         </div>
@@ -94,21 +94,33 @@
     <!-- lobby side panel -->
     <div id="lobby" class="hidden">
       <div class="lobby-panel card">
-        <div class="lobby-head">
-          <span class="field-label">Room code</span>
-          <button id="room-code" class="room-code" title="Click to copy">----</button>
+        <div class="lobby-scroll">
+          <div class="lobby-head">
+            <span class="field-label">Room code</span>
+            <button id="room-code" class="room-code" title="Click to copy">----</button>
+          </div>
+          <h3>Players <span id="player-count"></span></h3>
+          <ul id="player-list"></ul>
+          <div id="bot-row" class="bot-row hidden">
+            <button id="btn-bot-add" class="btn small cyan">+ Bot</button>
+            <button id="btn-bot-del" class="btn small">− Bot</button>
+          </div>
+          <h3>Map</h3>
+          <div id="map-list"></div>
+          <h3>Rules</h3>
+          <div class="rule-row"><span>Round length</span><div id="round-pick" class="seg"></div></div>
+          <label class="rule-row"><span>Chaos events 🌀</span><input type="checkbox" id="chaos-toggle" class="toggle" /></label>
+          <div class="items-head">
+            <h3>Items <span id="item-count" class="count"></span></h3>
+            <span id="item-quick"><button id="items-all" class="mini-btn">All</button><button id="items-none" class="mini-btn">None</button></span>
+          </div>
+          <div id="item-chips"></div>
         </div>
-        <h3>Players <span id="player-count"></span></h3>
-        <ul id="player-list"></ul>
-        <div id="bot-row" class="bot-row hidden">
-          <button id="btn-bot-add" class="btn small cyan">+ Bot</button>
-          <button id="btn-bot-del" class="btn small">− Bot</button>
+        <div class="lobby-foot">
+          <button id="btn-start" class="btn big pink">Start!</button>
+          <p id="wait-host" class="sub small">Waiting for the host to start…</p>
+          <button id="btn-lobby-menu" class="btn ghost small">☰ Menu</button>
         </div>
-        <h3>Map</h3>
-        <div id="map-list"></div>
-        <button id="btn-start" class="btn big pink">Start!</button>
-        <p id="wait-host" class="sub small">Waiting for the host to start…</p>
-        <button id="btn-lobby-menu" class="btn ghost small">☰ Menu</button>
       </div>
       <div class="controls-help card">
         <h3>How to play</h3>
@@ -118,6 +130,7 @@
         <div><b>Shift</b> / <b>RMB</b> dive</div>
         <div><b>E</b> / <b>LMB</b> use item / shoot</div>
         <div><b>V</b> first / third person</div>
+        <div><b>F</b> dance · don't fall off!</div>
         <div><b>Tab</b> scores · <b>Esc</b> menu</div>
       </div>
     </div>
@@ -128,6 +141,7 @@
         <div class="results-crown">👑</div>
         <h2 id="winner-name">Winner!</h2>
         <ol id="results-list"></ol>
+        <div id="awards" class="awards hidden"></div>
         <p class="sub small" id="results-timer">Back to lobby soon…</p>
       </div>
     </div>
@@ -171,6 +185,10 @@
           <span>Fullscreen</span>
           <input type="checkbox" id="set-fullscreen" class="toggle" />
         </label>
+        <p class="controls-line">
+          <kbd>WASD</kbd> move · <kbd>Space</kbd> jump · <kbd>Shift</kbd> dive · <kbd>E</kbd> use<br />
+          <kbd>V</kbd> view · <kbd>F</kbd> dance · <kbd>Tab</kbd> scores · <kbd>Esc</kbd> menu
+        </p>
         <button id="btn-settings-back" class="btn big pink">Back</button>
       </div>
     </div>

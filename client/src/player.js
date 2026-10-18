@@ -1,8 +1,10 @@
 // Character visuals for one player: model + animation crossfades, squash & stretch, name tag,
-// IT bomb/glow, shield bubble, frozen ice, ghost, boost trail, blob shadow, LIGHTS OUT light,
-// gun in hand (arm held out to aim), and snapshot interpolation for remote players.
+// IT bomb/glow, shield bubble, frozen ice, ghost, boost trail, balloon (float), giant (mushroom), dizzy stars,
+// blob shadow, LIGHTS OUT light request, gun in hand (arm held out to aim), and snapshot interpolation for
+// remote players (carried along by moving boxes).
 import * as THREE from 'three';
 import { PLAYER } from '../../shared/config.js';
+import { ITEMS } from '../../shared/items.js';
 import { makeCharacter } from './assets.js';
 import { glowTex } from './world.js';
 import { groundBelow } from '../../shared/physics.js';
@@ -38,6 +40,31 @@ const fuseMat = new THREE.MeshStandardMaterial({ color: 0xc98a4b, roughness: 0.9
 const shineMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
 const bubbleMat = new THREE.MeshStandardMaterial({ color: 0x9fe9ff, emissive: 0x3fb6ff, emissiveIntensity: 0.5, transparent: true, opacity: 0.28, roughness: 0.05, depthWrite: false });
 const iceMat = new THREE.MeshStandardMaterial({ color: 0xc8f3ff, emissive: 0x5fd0ff, emissiveIntensity: 0.3, transparent: true, opacity: 0.5, roughness: 0.05, depthWrite: false });
+const balloonGeo = new THREE.SphereGeometry(0.34, 20, 14);
+const knotGeo = new THREE.ConeGeometry(0.06, 0.08, 8);
+const stringGeo = new THREE.CylinderGeometry(0.008, 0.008, 1, 4).translate(0, -0.5, 0);
+const stringMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
+const starTex = (() => {
+  const c = document.createElement('canvas');
+  c.width = c.height = 64;
+  const g = c.getContext('2d');
+  g.beginPath();
+  for (let i = 0; i < 10; i++) {
+    const a = (i / 10) * Math.PI * 2 - Math.PI / 2;
+    const r = i % 2 ? 12 : 28;
+    g.lineTo(32 + Math.cos(a) * r, 34 + Math.sin(a) * r);
+  }
+  g.closePath();
+  g.fillStyle = '#ffe14d';
+  g.fill();
+  g.lineWidth = 5;
+  g.strokeStyle = '#1f1640';
+  g.stroke();
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+})();
+const starMat = new THREE.SpriteMaterial({ map: starTex, depthWrite: false });
 const blobTex = (() => {
   const c = document.createElement('canvas');
   c.width = c.height = 64;
@@ -101,7 +128,10 @@ export class PlayerView {
     this.sqv = 0;
     this.scale = 1;
     this.time = Math.random() * 10;
-    this.state = { it: false, fx: [], score: 0, item: null, ammo: null };
+    this.state = { it: false, fuse: null, fx: [], score: 0, item: null, ammo: null };
+    this.fuseMax = 1; // fuse when this bomb was lit (for the fuse bar); handed along with tags
+    this.lightIntensity = 0; // LIGHTS OUT: world.assignLights gives the nearest players a light
+    this.lightColor = info.color;
     this.ghostAlpha = 1;
     this.hideBody = false; // own model in first person
     this.gunId = null;
@@ -159,6 +189,31 @@ export class PlayerView {
     this.ice.visible = false;
     this.body.add(this.ice);
 
+    // balloon (float): tied to the hand side, bobbing above the head
+    this.balloonMat = new THREE.MeshStandardMaterial({ color: info.color, roughness: 0.25, emissive: info.color, emissiveIntensity: 0.15 });
+    this.balloon = new THREE.Group();
+    const ball2 = new THREE.Mesh(balloonGeo, this.balloonMat);
+    ball2.scale.y = 1.2;
+    const knot = new THREE.Mesh(knotGeo, this.balloonMat);
+    knot.position.y = -0.42;
+    const string = new THREE.Mesh(stringGeo, stringMat);
+    string.position.y = -0.44;
+    string.scale.y = 0.95;
+    this.balloon.add(ball2, knot, string);
+    this.balloon.visible = false;
+    this.body.add(this.balloon);
+
+    // dizzy: stars circling the head
+    this.stars = new THREE.Group();
+    for (let i = 0; i < 3; i++) {
+      const s = new THREE.Sprite(starMat);
+      s.scale.setScalar(0.32);
+      this.stars.add(s);
+    }
+    this.stars.position.y = PLAYER.height + 0.25;
+    this.stars.visible = false;
+    this.body.add(this.stars);
+
     // ground-anchored bits: blob shadow + IT ring
     this.ground = new THREE.Group();
     this.blob = new THREE.Mesh(blobGeo, new THREE.MeshBasicMaterial({ map: blobTex, transparent: true, depthWrite: false, opacity: 0.35, polygonOffset: true, polygonOffsetFactor: -2 }));
@@ -166,17 +221,15 @@ export class PlayerView {
     this.ring.visible = false;
     this.ground.add(this.blob, this.ring);
 
-    this.light = world.takeLight();
     scene.add(this.root, this.ground);
     this.playAnim('idle');
   }
 
   dispose() {
     this.scene.remove(this.root, this.ground);
-    this.world.returnLight(this.light);
     this.char.mixer?.stopAllAction();
     for (const w of this.char.mats) w.mat.dispose();
-    for (const m of [this.bombMat, this.glow.material, this.spark.material, this.blob.material, this.ring.material]) m.dispose();
+    for (const m of [this.bombMat, this.glow.material, this.spark.material, this.blob.material, this.ring.material, this.balloonMat]) m.dispose();
     if (this.tag) {
       this.tag.material.map.dispose();
       this.tag.material.dispose();
@@ -215,11 +268,12 @@ export class PlayerView {
   }
 
   // ---------- networking (remote players) ----------
-  push(now, p, ry, a) {
+  // mt: map time of the snapshot (to carry riders of moving boxes up to the time the boxes are drawn at)
+  push(now, p, ry, a, mt) {
     const b = this.buffer;
     const last = b[b.length - 1];
     if (last && Math.hypot(p[0] - last.x, p[1] - last.y, p[2] - last.z) > 8) b.length = 0; // teleport: no lerp
-    b.push({ t: now, x: p[0], y: p[1], z: p[2], ry, a });
+    b.push({ t: now, x: p[0], y: p[1], z: p[2], ry, a, mt });
     if (b.length > 30) b.shift();
   }
 
@@ -235,6 +289,7 @@ export class PlayerView {
     let z = a.z;
     let ry = a.ry;
     let anim = a.a;
+    let mt = a.mt;
     if (c && rt > a.t) {
       const k = Math.min(1, (rt - a.t) / Math.max(1, c.t - a.t));
       x += (c.x - a.x) * k;
@@ -242,6 +297,12 @@ export class PlayerView {
       z += (c.z - a.z) * k;
       ry = lerpAngle(a.ry, c.ry, k);
       anim = k < 0.5 ? a.a : c.a;
+      if (mt != null && c.mt != null) mt += (c.mt - mt) * k;
+    }
+    if (mt != null && this.world.movers.length) {
+      const q = { x, y, z };
+      this.world.carry(q, mt, this.world.mt);
+      ({ x, y, z } = q);
     }
     const r = this.root;
     const far = Math.hypot(x - r.position.x, y - r.position.y, z - r.position.z) > 6 || !this.placed;
@@ -314,7 +375,7 @@ export class PlayerView {
   }
 
   // ---------- per frame ----------
-  // ctx: { now, scale, fuse, darkness, dancing }
+  // ctx: { scale (chaos), fuse (this player's, extrapolated), darkness, runRate, countdown }
   update(dt, ctx) {
     this.time += dt;
     const st = this.state;
@@ -323,10 +384,14 @@ export class PlayerView {
     const ghost = fx.includes('ghost');
     const shield = fx.includes('shield');
     const boost = fx.includes('boost');
+    const giant = fx.includes('giant');
     const t = this.time;
 
-    // chaos scale
-    this.scale += (ctx.scale - this.scale) * Math.min(1, dt * 6);
+    // chaos scale x mega mushroom
+    if (giant !== !!this.wasGiant) this.stretch(giant ? 2 : -1);
+    this.wasGiant = giant;
+    const targetScale = ctx.scale * (giant ? ITEMS.mushroom.scale : 1);
+    this.scale += (targetScale - this.scale) * Math.min(1, dt * 6);
     this.body.scale.setScalar(this.scale);
 
     // squash & stretch spring (substepped for stability)
@@ -391,6 +456,20 @@ export class PlayerView {
     }
     this.ice.visible = frozen;
 
+    this.balloon.visible = fx.includes('float');
+    if (this.balloon.visible) {
+      this.balloon.position.set(0.35 + Math.sin(t * 1.7) * 0.08, PLAYER.height + 0.75 + Math.sin(t * 2.3) * 0.08, -0.1);
+      this.balloon.rotation.z = Math.sin(t * 1.7) * 0.12 - 0.15;
+    }
+    this.stars.visible = fx.includes('dizzy');
+    if (this.stars.visible) {
+      this.stars.children.forEach((s, i) => {
+        const a = t * 5 + (i / 3) * Math.PI * 2;
+        s.position.set(Math.cos(a) * 0.45, Math.sin(a * 2) * 0.06, Math.sin(a) * 0.45);
+        s.material.rotation = t * 3;
+      });
+    }
+
     this.applyMaterials(pulse, frozen);
 
     if (boost && !hidden && !this.hideBody && Math.random() < dt * 50) {
@@ -400,7 +479,7 @@ export class PlayerView {
 
     // blob shadow on the ground below
     const p = this.root.position;
-    const gy = groundBelow(this.world.boxes || [], p.x, p.z, p.y + 0.1);
+    const gy = groundBelow(this.world.solids || [], p.x, p.z, p.y + 0.1);
     const h = p.y - gy;
     if (gy > -Infinity && h < 25) {
       this.ground.visible = this.root.visible;
@@ -409,12 +488,9 @@ export class PlayerView {
       this.blob.scale.setScalar(this.scale * (1 - Math.min(0.5, h / 20)));
     } else this.ground.visible = false;
 
-    // LIGHTS OUT personal light
-    if (this.light) {
-      this.light.position.set(p.x, p.y + 1.8 * this.scale, p.z);
-      this.light.color.setHex(st.it ? 0xff3040 : this.color);
-      this.light.intensity = hidden ? 0 : ctx.darkness * (st.it ? 26 : 13);
-    }
+    // LIGHTS OUT personal light (handed out by world.assignLights)
+    this.lightColor = st.it ? 0xff3040 : this.color;
+    this.lightIntensity = hidden ? 0 : ctx.darkness * (st.it ? 26 : 13);
   }
 
   applyMaterials(pulse, frozen) {
