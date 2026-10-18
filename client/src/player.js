@@ -301,7 +301,7 @@ export class PlayerView {
     }
     if (mt != null && this.world.movers.length) {
       const q = { x, y, z };
-      this.world.carry(q, mt, this.world.mt);
+      this.world.carry(q, mt, this.world.mt, anim);
       ({ x, y, z } = q);
     }
     const r = this.root;

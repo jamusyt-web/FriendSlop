@@ -324,7 +324,7 @@ export class World {
     this.solids = map.boxes;
     this.skyClouds = null;
     this.dynamic = []; // moving / blinking: { box, mesh, y (mesh origin above box bottom), mats (own, blinking), s }
-    this.movers = map.boxes.filter((b) => b.move);
+    this.movers = map.boxes.filter((b) => b.move && b.kind !== 'lava'); // what remote players can ride (carry)
     this.beltMats = new Map();
 
     let extent = 10;
@@ -415,22 +415,26 @@ export class World {
     }
   }
 
-  // Remote players are drawn ~0.1 s in the past while the boxes are drawn now: a point standing on a moving box
-  // at map time t0 rides along with it to t1 (same easing as shared/maps.js setMapTime).
-  carry(p, t0, t1) {
+  // Remote players are drawn ~0.1 s in the past while the boxes are drawn now: a player standing on a moving box
+  // at map time t0 rides along with it to t1 (same easing as shared/maps.js setMapTime). A human's reported spot
+  // is also older than t0 by their lag (up to ~0.25 s), so lifts match height loosely, but only with the center
+  // over the lift (not someone beside it or on the roof next to it), and put them on the lift top as drawn.
+  carry(p, t0, t1, anim) {
+    if (anim === 'jump' || anim === 'fall') return;
     for (const b of this.movers) {
       const { to, period, phase = 0 } = b.move;
       const k = (t) => (1 - Math.cos(2 * Math.PI * (t / period + phase))) / 2;
       const k0 = k(t0);
+      const k1 = k(t1);
       const lo = b.base.min;
       const hi = b.base.max;
-      if (Math.abs(p.y - (hi[1] + to[1] * k0)) > 0.3) continue;
-      const R = PLAYER.radius;
+      const lag = Math.abs(to[1]) * (Math.PI / period) * 0.25; // how far it rises / sinks in 0.25 s at top speed
+      if (Math.abs(p.y - (hi[1] + to[1] * k0)) > 0.3 + lag) continue;
+      const R = to[1] ? 0 : PLAYER.radius;
       if (p.x < lo[0] + to[0] * k0 - R || p.x > hi[0] + to[0] * k0 + R || p.z < lo[2] + to[2] * k0 - R || p.z > hi[2] + to[2] * k0 + R) continue;
-      const dk = k(t1) - k0;
-      p.x += to[0] * dk;
-      p.y += to[1] * dk;
-      p.z += to[2] * dk;
+      p.x += to[0] * (k1 - k0);
+      p.z += to[2] * (k1 - k0);
+      if (to[1]) p.y = hi[1] + to[1] * k1;
       return;
     }
   }

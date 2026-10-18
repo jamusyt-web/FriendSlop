@@ -28,9 +28,11 @@ const AWARDS = [ // [stat, icon, title, singular, plural]
 ];
 const mmss = (s) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
 const settingsOf = (room) => room?.settings || DEFAULT_SETTINGS;
+const sameSettings = (a, b) => a.items.join() === b.items.join() && a.round === b.round && a.chaos === b.chaos;
 let on = {};
 let lobbyRoom = null;
 let lobbyHost = false;
+let pending = null; // host: settings sent but not echoed back yet (older room messages must not undo quick clicks)
 let itemsOff = false;
 
 export function initUI(handlers) {
@@ -156,14 +158,14 @@ export function initUI(handlers) {
   $('round-pick').innerHTML = ROUND_TIMES.map((t) => `<button class="seg-btn" data-round="${t}">${mmss(t)}</button>`).join('');
   const change = (patch) => {
     if (!lobbyRoom || !lobbyHost) return;
-    lobbyRoom.settings = { ...settingsOf(lobbyRoom), ...patch }; // show it now, the server's room message confirms
-    renderSettings(lobbyRoom.settings);
-    on.gameSettings(lobbyRoom.settings);
+    pending = { ...(pending || settingsOf(lobbyRoom)), ...patch }; // show it now, the server's room message confirms
+    renderSettings(pending);
+    on.gameSettings(pending);
   };
   $('item-chips').addEventListener('click', (e) => {
     const id = e.target.closest('.chip')?.dataset.item;
     if (!id) return;
-    const items = settingsOf(lobbyRoom).items;
+    const items = (pending || settingsOf(lobbyRoom)).items;
     change({ items: items.includes(id) ? items.filter((i) => i !== id) : ITEM_IDS.filter((i) => i === id || items.includes(i)) });
   });
   $('items-all').onclick = () => change({ items: [...ITEM_IDS] });
@@ -249,9 +251,11 @@ export function updateLobby(room, myId) {
   $('btn-bot-add').disabled = room.players.length >= MAX_PLAYERS;
   $('btn-bot-del').disabled = !room.players.some((p) => p.bot);
   $('wait-host').classList.toggle('hidden', isHost);
+  const st = settingsOf(room);
+  if (!isHost || room.phase !== 'lobby' || room.code !== lobbyRoom?.code || (pending && sameSettings(st, pending))) pending = null;
   lobbyRoom = room;
   lobbyHost = isHost;
-  renderSettings(settingsOf(room));
+  renderSettings(pending || st);
 }
 
 function renderSettings(st) {

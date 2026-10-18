@@ -116,6 +116,23 @@ export class Mover {
     this.prev.z = this.pos.z;
   }
 
+  // Server fx knock (spring, glove, blasts, ...). Own velocity is relative to the floor, so leaving it from
+  // outside step() has to take the floor's speed along (a spring on a ferry doesn't drop you behind it).
+  knock(v) {
+    const f = this.grounded ? floorVel(this.ground) : null;
+    if (f) {
+      this.vel.x += f[0];
+      this.vel.z += f[2];
+      this.vel.y += Math.max(0, f[1]);
+    }
+    if (v[1] > 0) this.vel.y = Math.max(this.vel.y, 0); // launches (spring, boom) aren't eaten by fall speed
+    this.vel.x += v[0];
+    this.vel.y += v[1];
+    this.vel.z += v[2];
+    this.grounded = false;
+    this.diving = false;
+  }
+
   // inp: {x, z} world-space wish direction (length <= 1), locked: bool. Returns list of events.
   step(dt, inp, mods, events) {
     const p = this.pos;

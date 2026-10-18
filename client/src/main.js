@@ -258,11 +258,14 @@ function loadMap(id) {
 }
 
 // Map clock: runs at real speed, nudged toward the server's (snapshot mt + time since). Never steps back
-// unless it's way off (joined late, tab was hidden).
+// unless it's way off (joined late, tab was hidden). Riders are only carried as far as the physics steps go
+// (frame dt, capped), so while we stand on a moving box the clock runs at exactly dt and catches up once we
+// step off; otherwise a hitch or a slow frame would slide the box out from under us.
 function tickMapClock(dt, now) {
   const target = S.mtSnap + (now - S.mtSnapAt) / 1000;
   const err = target - S.mt;
-  S.mt = Math.abs(err) > 1 ? target : S.mt + dt * Math.min(2, Math.max(0.5, 1 + err * 2));
+  if (mover.grounded && mover.ground?.dv) S.mt += dt;
+  else S.mt = Math.abs(err) > 1 ? target : S.mt + dt * Math.min(2, Math.max(0.5, 1 + err * 2));
 }
 
 function setPhase(phase) {
@@ -330,18 +333,11 @@ function applySnap(s) {
 function applyFx(m) {
   const self = me();
   switch (m.k) {
-    case 'knock': {
-      const v = m.v || [0, 0, 0];
-      if (v[1] > 0) mover.vel.y = Math.max(mover.vel.y, 0); // launches (spring, boom) aren't eaten by fall speed
-      mover.vel.x += v[0];
-      mover.vel.y += v[1];
-      mover.vel.z += v[2];
-      mover.grounded = false;
-      mover.diving = false;
+    case 'knock':
+      mover.knock(m.v || [0, 0, 0]);
       effects.addShake(0.35);
       self?.stretch(1.3);
       break;
-    }
     case 'freeze':
       mover.frozen = Math.max(mover.frozen, m.dur ?? 1); // same as the server: a longer freeze wins
       break;

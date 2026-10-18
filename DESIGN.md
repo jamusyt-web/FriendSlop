@@ -31,7 +31,7 @@ Phases: `lobby` → `countdown` → `play` → `results` → `lobby`.
   - Every CHAOS_EVERY s (if chaos is on) a random chaos event (shared/chaos.js) is announced; `mods` last CHAOS_DURATION s. Instant ones: swap (shuffle positions), rain (everyone gets a random item, all boxes respawn).
   - Mystery boxes at map `items` spots. Walk into one while empty-handed → random enabled item (by weight). Box respawns after ITEM_RESPAWN s. No items enabled → no boxes.
   - Falling below map.killY or touching a lava box → client respawns itself at a random spawn and sends `fell`. During play: −FALL_PENALTY, and whoever last knocked/froze/slipped/swapped/magneted you within KNOCKOFF_WINDOW s gets +KNOCKOFF_BONUS (a "knockoff").
-- Results (RESULTS_TIME s): scoreboard, winner dances, fun awards from per-player stats (most tags, most knockoffs, clumsiest = most falls, most booms). Then back to lobby automatically.
+- Results (RESULTS_TIME s): everyone moved to a spawn (winner on their own) and item effects/leftovers cleared so nobody falls mid-celebration; scoreboard, winner dances, fun awards from per-player stats (most tags, most knockoffs, clumsiest = most falls, most booms). Then back to lobby automatically.
 
 ## Controls
 

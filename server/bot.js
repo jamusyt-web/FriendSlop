@@ -97,14 +97,8 @@ export class Bot {
   // Server fx applied to our own physics, exactly like the client's applyFx.
   fx(k, m) {
     const mv = this.mover;
-    if (k === 'knock') {
-      if (m.v[1] > 0) mv.vel.y = Math.max(mv.vel.y, 0);
-      mv.vel.x += m.v[0];
-      mv.vel.y += m.v[1];
-      mv.vel.z += m.v[2];
-      mv.grounded = false;
-      mv.diving = false;
-    } else if (k === 'freeze') mv.frozen = Math.max(mv.frozen, m.dur);
+    if (k === 'knock') mv.knock(m.v);
+    else if (k === 'freeze') mv.frozen = Math.max(mv.frozen, m.dur);
     else if (k === 'slip') mv.slip = m.dur;
     else if (k === 'boost') {
       mv.boost = m.dur;

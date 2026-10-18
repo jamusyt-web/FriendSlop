@@ -557,11 +557,16 @@ class Room {
     this.ev('go');
   }
 
+  // Everyone celebrates on a spawn, the winner on one of their own: nobody can move during results, but
+  // floors keep blinking out and pistons / rising lava keep going. Effects and leftovers (giants bonking,
+  // peels, pearls in flight, ghosts) are cleared so nobody gets knocked off or hidden while the scores show.
   startResults() {
-    const scores = [...this.players.values()]
-      .sort((a, b) => b.score - a.score)
-      .map(({ id, name, color, score, bot, stats }) => ({ id, name, color, score: Math.floor(score), bot: !!bot, stats }));
-    for (const pl of this.players.values()) pl.fuse = null;
+    const ranked = [...this.players.values()].sort((a, b) => b.score - a.score);
+    const scores = ranked.map(({ id, name, color, score, bot, stats }) => ({ id, name, color, score: Math.floor(score), bot: !!bot, stats }));
+    for (const pl of this.players.values()) Object.assign(pl, { fuse: null, fx: {} });
+    this.clearWorld();
+    const [first, ...rest] = shuffle(this.map.spawns);
+    ranked.forEach((pl, i) => this.teleport(pl, i === 0 ? first : rest[(i - 1) % rest.length]));
     this.chaos = null;
     this.broadcast({ t: 'results', scores });
     this.setPhase('results', RESULTS_TIME);
