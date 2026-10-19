@@ -7,6 +7,7 @@ let master = null;
 let volume = 0.7;
 const listener = { x: 0, y: 0, z: 0, rx: 1, rz: 0 };
 const lastPlayed = {};
+let tap = null; // clip capture: { clock() s, play(name, gain, pan, rate) } gets every sound instead of the speakers
 
 export async function loadSfx(manifest, base) {
   const decoder = new OfflineAudioContext(1, 1, 44100);
@@ -48,11 +49,16 @@ export function setListener(pos, right) {
   listener.rz = right.z;
 }
 
+// tools/clips: sounds go to t.play (with the gain, pan and rate they'd get) to be mixed into the clip's soundtrack
+export function setTap(t) {
+  tap = t;
+}
+
 // opts: volume, rate (pitch), at {x,y,z} for distance falloff + pan, jitter (random pitch range)
 export function play(name, opts = {}) {
   const buf = buffers[name];
-  if (!buf || !ctx || ctx.state !== 'running') return;
-  const now = ctx.currentTime;
+  if (!buf || (!tap && (!ctx || ctx.state !== 'running'))) return;
+  const now = tap ? tap.clock() : ctx.currentTime;
   if (lastPlayed[name] && now - lastPlayed[name] < 0.03) return; // avoid stacking the same sound
   lastPlayed[name] = now;
 
@@ -66,10 +72,12 @@ export function play(name, opts = {}) {
     gain *= Math.max(0.12, 1 - d / 45);
     if (d > 0.5) pan = Math.max(-0.8, Math.min(0.8, (dx * listener.rx + dz * listener.rz) / d));
   }
+  const jitter = opts.jitter ?? 0.08;
+  const rate = (opts.rate ?? 1) * (1 + (Math.random() * 2 - 1) * jitter);
+  if (tap) return tap.play(name, gain, pan, rate);
   const src = ctx.createBufferSource();
   src.buffer = buf;
-  const jitter = opts.jitter ?? 0.08;
-  src.playbackRate.value = (opts.rate ?? 1) * (1 + (Math.random() * 2 - 1) * jitter);
+  src.playbackRate.value = rate;
   const g = ctx.createGain();
   g.gain.value = gain;
   const p = ctx.createStereoPanner();

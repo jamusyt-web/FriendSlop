@@ -203,6 +203,7 @@ class Room {
   constructor(code) {
     this.code = code;
     this.players = new Map(); // id -> player, in join order
+    this.spectators = new Map(); // id -> { id, ws, name, spectator }: watch (and may host), never play
     this.host = null;
     this.settings = { items: [...ITEM_IDS], round: ROUND_TIME, chaos: true }; // host picks in the lobby
     this.phase = 'lobby';
@@ -245,7 +246,7 @@ class Room {
 
   broadcast(msg) {
     const data = JSON.stringify(msg);
-    for (const pl of this.players.values()) {
+    for (const pl of [...this.players.values(), ...this.spectators.values()]) {
       if (pl.ws && pl.ws.readyState === pl.ws.OPEN) pl.ws.send(data);
     }
   }
@@ -269,6 +270,7 @@ class Room {
       phase: this.phase,
       settings: this.settings,
       players: [...this.players.values()].map(({ id, name, color, bot }) => ({ id, name, color, bot: !!bot })),
+      spectators: [...this.spectators.values()].map(({ id, name }) => ({ id, name })),
     });
   }
 
@@ -301,6 +303,17 @@ class Room {
     return pl;
   }
 
+  // Watches without playing: gets every broadcast and can host, but has no body, is never IT and takes no player slot.
+  addSpectator(ws, name) {
+    const id = nextId++;
+    const sp = { id, ws, name: name || `Viewer ${id}`, spectator: true };
+    this.spectators.set(id, sp);
+    this.host ??= id;
+    this.send(sp, { t: 'joined', id, code: this.code, spectate: true });
+    this.broadcastRoom();
+    return sp;
+  }
+
   addBot() {
     const taken = [...this.players.values()];
     const name = pick(BOT_NAMES.filter((n) => !taken.some((o) => o.name === n))) || 'Bot';
@@ -308,17 +321,19 @@ class Room {
     this.add(null, name, color, new Bot());
   }
 
-  // Bots stay when humans leave; the room goes away with its last human.
+  // Bots stay when humans leave; the room goes away with its last human (player or spectator).
+  // The host role goes to the first human player left, else to a spectator.
   remove(pl) {
-    this.players.delete(pl.id);
+    if (pl.spectator) this.spectators.delete(pl.id);
+    else this.players.delete(pl.id);
     const humans = [...this.players.values()].filter((o) => !o.bot);
-    if (humans.length === 0) return this.destroy();
-    if (this.host === pl.id) this.host = humans[0].id;
+    if (humans.length === 0 && this.spectators.size === 0) return this.destroy();
+    if (this.host === pl.id) this.host = humans[0]?.id ?? this.spectators.keys().next().value;
     if (pl.fuse != null) {
       const next = pick(this.runners()); // bomb (and fuse) passes on; nobody left to take it: it's gone
       if (next) next.fuse = pl.fuse;
     }
-    if (this.players.size === 1 && (this.phase === 'countdown' || this.phase === 'play')) return this.startResults(); // no opponents left
+    if (!pl.spectator && this.players.size === 1 && (this.phase === 'countdown' || this.phase === 'play')) return this.startResults(); // no opponents left
     this.broadcastRoom();
   }
 
@@ -427,13 +442,14 @@ class Room {
   // --- client messages ---
 
   onMessage(pl, msg) {
-    if (msg.t === 's') this.onState(pl, msg);
-    else if (msg.t === 'use') this.useItem(pl, unit(msg.dir));
-    else if (msg.t === 'fell') this.fell(pl, now());
-    else if (msg.t === 'map') this.setMap(pl, msg.map);
+    if (msg.t === 'map') this.setMap(pl, msg.map);
     else if (msg.t === 'settings') this.setSettings(pl, msg);
     else if (msg.t === 'start') this.start(pl);
     else if (msg.t === 'bot') this.setBots(pl, msg.add);
+    else if (pl.spectator) return; // spectators only watch (and host)
+    else if (msg.t === 's') this.onState(pl, msg);
+    else if (msg.t === 'use') this.useItem(pl, unit(msg.dir));
+    else if (msg.t === 'fell') this.fell(pl, now());
   }
 
   onState(pl, msg) {
@@ -462,7 +478,7 @@ class Room {
   }
 
   start(pl) {
-    if (pl.id !== this.host || this.phase !== 'lobby') return;
+    if (pl.id !== this.host || this.phase !== 'lobby' || this.players.size === 0) return; // a spectator host needs players (or bots)
     this.startCountdown();
   }
 
@@ -862,7 +878,8 @@ function parse(data, isBinary) {
 }
 
 // Returns the room to join, creating one when no code is given, or null after sending an error.
-function findRoom(ws, code) {
+// Spectators don't take a player slot, so they can watch a full room.
+function findRoom(ws, code, spectate) {
   code = typeof code === 'string' ? code.trim().toUpperCase() : '';
   const fail = (msg) => {
     ws.send(JSON.stringify({ t: 'error', msg }));
@@ -875,7 +892,7 @@ function findRoom(ws, code) {
   }
   const room = rooms.get(code);
   if (!room) return fail('Room not found');
-  if (room.players.size >= MAX_PLAYERS) return fail('Room is full');
+  if (!spectate && room.players.size >= MAX_PLAYERS) return fail('Room is full');
   return room;
 }
 
@@ -887,8 +904,9 @@ export function handleConnection(ws) {
     if (!msg) return;
     if (player) return room.onMessage(player, msg);
     if (msg.t !== 'join') return;
-    room = findRoom(ws, msg.code);
-    if (room) player = room.add(ws, cleanName(msg.name), cleanColor(msg.color));
+    const spectate = msg.spectate === true;
+    room = findRoom(ws, msg.code, spectate);
+    if (room) player = spectate ? room.addSpectator(ws, cleanName(msg.name)) : room.add(ws, cleanName(msg.name), cleanColor(msg.color));
   });
   ws.on('close', () => {
     if (player) room.remove(player);

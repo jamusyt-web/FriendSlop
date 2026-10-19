@@ -17,6 +17,24 @@ import { CameraRig } from './camera.js';
 import { Mover, raycastBoxes } from '../../shared/physics.js';
 import { PlayerView } from './player.js';
 import { Viewmodel, Projectiles, Ropes, isGun, GUN_COLOR } from './guns.js';
+import { Director } from './spectate.js';
+
+// URL options (DESIGN.md "Spectating, replays, clips"): ?replay=<url> plays a recording from tools/clips instead of
+// the menu; &capture=1 lets tools/clips/capture.mjs drive the game clock. View options work in any mode
+// (&dist=<k>: third-person camera distance multiplier).
+const params = new URLSearchParams(location.search);
+const REPLAY = params.get('replay');
+const CAPTURE = !!REPLAY && params.get('capture') === '1';
+const FOLLOW = (params.get('follow') || 'auto').toLowerCase(); // spectating: 'auto' director or a player's name
+const NOHUD = params.get('nohud') === '1';
+if (params.has('fp')) prefs.firstPerson = params.get('fp') === '1';
+document.body.classList.toggle('nohud', NOHUD);
+document.body.classList.toggle('keep-feed', params.get('feed') === '1');
+document.body.classList.toggle('capture', CAPTURE); // a video can't be clicked: no spectator controls bar
+
+// Game clock in ms: real time, or in capture mode only what window.__capture.step() advanced it by
+let captureNow = 0;
+const clock = () => (CAPTURE ? captureNow : performance.now());
 
 const STEP = 1 / 120; // fixed physics step
 const DANCE_TIME = 2; // F tap dances this long (holding F keeps dancing)
@@ -48,6 +66,7 @@ const camera = new THREE.PerspectiveCamera(prefs.fov, innerWidth / innerHeight, 
 const effects = new Effects(scene);
 const world = new World(scene, renderer, effects);
 const rig = new CameraRig(camera);
+if (params.has('dist')) rig.distK = Number(params.get('dist')) || 1;
 const mover = new Mover();
 const viewCtx = { scene, world, effects };
 const vm = new Viewmodel(scene.environment);
@@ -94,9 +113,17 @@ const S = {
   useBuf: 0, // a gun click during the cooldown fires when it ends (until this time)
   dizzyK: 0, // camera wobble blend
   tpFrom: null, // where the last teleport took us from (warp poofs)
+  spectating: false, // joined as a spectator: no own player, the camera follows S.target
+  target: null, // spectating: id of the player the camera follows
+  follow: null, // spectating: id picked by hand (click / Space, ?follow=<name>), null = auto director
+  followName: null, // ?follow=<name> until that player shows up
+  replay: null, // playing a recording: { msgs: [[ms, msg]], i, start }
 };
+let director = new Director();
 
 const me = () => S.views.get(S.myId);
+// the player whose eyes the first-person camera looks through: you, or who you're spectating
+const povId = () => (S.spectating ? S.target : S.myId);
 const infoOf = (id) => S.room?.players.find((p) => p.id === id) || null;
 const posOf = (id) => S.views.get(id)?.root.position || null;
 const near = (p) => (p ? Math.max(0, 1 - camera.position.distanceTo(p) / 30) : 0);
@@ -118,6 +145,10 @@ function clearGame() {
   for (const v of S.views.values()) v.dispose();
   S.views.clear();
   Object.assign(S, { myId: null, room: null, phase: null, time: null, chaos: null, results: null, paused: false, mapReady: false, tpSeq: 0, nextShot: 0, useBuf: 0, dizzyK: 0 });
+  Object.assign(S, { spectating: false, target: null, follow: null, followName: null, replay: null });
+  director = new Director();
+  rig.blend = null;
+  document.body.classList.remove('spectating');
   effects.clear();
   projectiles.clear();
   ropes.clear();
@@ -139,12 +170,14 @@ function makePreview() {
   S.preview.forcedAnim = 'dance';
 }
 
-function connect(code) {
+// spectate: watch room `code` without playing
+function connect(code, spectate = false) {
   S.screen = 'connecting';
   ui.showScreen('connecting');
-  ui.setConnectingText(code ? `Joining ${code}…` : 'Creating room…');
+  ui.setConnectingText(spectate ? `Watching ${code}…` : code ? `Joining ${code}…` : 'Creating room…');
   const join = { t: 'join', name: prefs.name || 'Slopper', color: prefs.color };
   if (code) join.code = code;
+  if (spectate) join.spectate = true;
   net.connect(join, onMessage, (wasOpen) => {
     if (S.screen === 'menu') return;
     goMenu(wasOpen ? 'Disconnected from server' : "Couldn't reach the server", true);
@@ -162,8 +195,36 @@ function enterGame() {
   ui.showScreen('game');
   ui.setItem(null);
   input.clear(); // keys pressed on the menu (V, Space, E) must not fire on the first game frame
+  document.body.classList.toggle('spectating', S.spectating);
+  if (S.spectating && FOLLOW !== 'auto') S.followName = FOLLOW;
   if (S.room) applyRoom(S.room);
-  ui.setLockHint(!input.locked);
+  ui.setLockHint(!input.locked && !S.spectating);
+}
+
+// Replay (?replay=<url>): the recording's messages go through onMessage as if they came from the server
+async function startReplay(url) {
+  let rec;
+  try {
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(res.status);
+    rec = await res.json();
+  } catch {
+    return goMenu("Couldn't load the replay", true);
+  }
+  S.screen = 'connecting';
+  ui.showScreen('connecting');
+  ui.setConnectingText('Loading replay…');
+  world.load(rec.map); // something to draw until the recording's room message (like the menu's backdrop)
+  S.replay = { msgs: rec.msgs || [], i: 0, start: clock() };
+}
+
+// delivers every recorded message up to now, stamped with the time it was recorded at
+function pumpReplay(now) {
+  const r = S.replay;
+  while (r.i < r.msgs.length && r.start + r.msgs[r.i][0] <= now) {
+    const [t, m] = r.msgs[r.i++];
+    onMessage(m, r.start + t);
+  }
 }
 
 function openPause() {
@@ -179,14 +240,16 @@ function resume() {
   S.paused = false;
   input.enabled = true;
   ui.showPause(false);
-  input.requestLock();
+  if (!S.spectating) input.requestLock();
 }
 
 // ---------- network ----------
-function onMessage(m) {
+// at: when the message arrived (ms, game clock); replays pass the time it was recorded at
+function onMessage(m, at = clock()) {
   switch (m.t) {
     case 'joined':
       S.myId = m.id;
+      S.spectating = !!m.spectate;
       enterGame();
       break;
     case 'error':
@@ -197,12 +260,13 @@ function onMessage(m) {
       applyRoom(m);
       break;
     case 'snap':
-      applySnap(m);
+      applySnap(m, at);
       break;
     case 'fx':
       applyFx(m);
       break;
     case 'ev':
+      if (S.spectating) director.event(m, at);
       applyEvent(m);
       break;
     case 'results':
@@ -253,7 +317,7 @@ function applyRoom(room) {
 function loadMap(id) {
   world.load(id);
   mover.boxes = world.solids;
-  Object.assign(S, { mt: 0, mtSnap: 0, mtSnapAt: performance.now() });
+  Object.assign(S, { mt: 0, mtSnap: 0, mtSnapAt: clock() });
   world.setTime(0);
 }
 
@@ -286,12 +350,11 @@ function setPhase(phase) {
     if (prev === 'results') ui.toast('Back in the lobby — run it back?');
   }
   if (phase === 'countdown') mover.reset(); // the server clears every effect when a round starts
-  ui.setLockHint(!input.locked && phase !== 'results');
+  ui.setLockHint(!input.locked && phase !== 'results' && !S.spectating);
   ui.setItemVisible(phase !== 'results');
 }
 
-function applySnap(s) {
-  const now = performance.now();
+function applySnap(s, now) {
   setPhase(s.phase);
   S.snapAt = now;
   S.time = s.time ?? null;
@@ -411,13 +474,13 @@ function applyEvent(e) {
     case 'chaos': {
       const c = CHAOS[e.id];
       if (!c) break;
-      S.chaosAt = performance.now();
+      S.chaosAt = clock();
       ui.bigText(`${c.name}!<small>${CHAOS_BLURB[e.id] || ''}</small>`, 'chaos');
       ui.feed(`🌀 CHAOS: <b>${c.name}</b>`);
       audio.play('whoosh', { volume: 0.9, rate: 0.8 });
       audio.play('go', { volume: 0.6, rate: 1.2 });
       effects.addShake(0.2);
-      const p = posOf(S.myId);
+      const p = posOf(povId());
       if (p) effects.burst({ x: p.x, y: p.y + 3, z: p.z }, { count: 50, colors: [0x8cff5a, 0xff4fa3, 0x2ee6ff, 0xffd23f], speed: 10, up: 4, size: 0.3, life: 1.4, gravity: 8 });
       break;
     }
@@ -599,14 +662,16 @@ function itemFx(item, p, mine) {
 // ---------- guns ----------
 function shotFx(e, mine) {
   const v = S.views.get(e.id);
+  const eyes = () => e.id === povId() && rig.firstPerson && vm.visible; // shot by who we look through: from the viewmodel
   let from;
-  if (mine && rig.firstPerson && vm.visible) from = vm.muzzleWorld(camera, muzzle);
+  if (eyes()) from = vm.muzzleWorld(camera, muzzle);
   else if (v && (v.isSelf || v.placed)) from = v.muzzleWorld(muzzle);
   else if (e.from) from = muzzle.set(e.from[0], e.from[1], e.from[2]);
   else return;
   const color = GUN_COLOR[e.item] ?? 0xffffff;
   if (!mine) {
     v?.kickGun();
+    if (eyes()) vm.kick(e.item === 'rocket' ? 1.5 : 1);
     const [sfx, rate] = GUN_SFX[e.item] || ['shoot', 1];
     audio.play(sfx, { at: from, rate });
   }
@@ -621,7 +686,7 @@ function shotFx(e, mine) {
   if (e.item === 'grapple') {
     // the rope follows the shooter's hand while they get yanked toward the hook
     const src = (out) => {
-      if (mine && rig.firstPerson && vm.visible) return vm.muzzleWorld(camera, out);
+      if (eyes()) return vm.muzzleWorld(camera, out);
       const sv = S.views.get(e.id);
       return sv && (sv.isSelf || sv.placed) ? sv.muzzleWorld(out) : out.set(e.from[0], e.from[1], e.from[2]);
     };
@@ -810,12 +875,16 @@ function updateGame(dt, now) {
   const orbiting = S.phase === 'results' && S.results;
   let look = { x: 0, y: 0 };
 
-  if (self && S.mapReady) {
+  if ((self || S.spectating) && S.mapReady) {
     if (input.take('view')) {
       prefs.firstPerson = !prefs.firstPerson;
       savePrefs();
     }
     if (rig.firstPerson !== prefs.firstPerson) rig.setFirstPerson(prefs.firstPerson);
+  }
+  if (S.spectating && input.take('jump')) nextTarget();
+
+  if (self && S.mapReady) {
     look = input.takeLook();
     if (input.locked && !S.paused) rig.look(look.x, look.y, prefs.sensitivity, prefs.invertY);
 
@@ -887,8 +956,15 @@ function updateGame(dt, now) {
 
   projectiles.update(dt, now);
 
+  // whose view the camera shows: yours, or the spectated player's
+  const eyes = S.spectating ? spectateTarget(now) : self;
+  const eyesGun = eyes && isGun(eyes.state.item) ? eyes.state.item : null;
+
   // views
-  if (self) self.hideBody = rig.firstPerson && !orbiting;
+  for (const v of S.views.values()) {
+    v.hideBody = v === eyes && rig.firstPerson && !orbiting;
+    if (v.tag) v.tag.visible = !(S.spectating && v === eyes); // like your own player: no name over the one you watch
+  }
   const runRate = Math.max(0.6, Math.hypot(mover.vel.x, mover.vel.z) / 9);
   for (const v of S.views.values()) {
     v.update(dt, { scale: m.scale, fuse: fuseOf(v, now), darkness: world.darkness, runRate: v.isSelf ? runRate : 1, countdown: S.phase === 'countdown' });
@@ -910,12 +986,47 @@ function updateGame(dt, now) {
     const shake = { ...effects.shake, roll: effects.shake.roll + Math.sin(t * 2.6) * 0.13 * S.dizzyK };
     const fov = (boosting ? 10 : 0) + (m.speed > 1 ? 6 : 0) + Math.sin(t * 1.9) * 6 * S.dizzyK;
     rig.update(dt, self.root.position, self.scale, world.solids, prefs.fov, shake, fov, !!gunId);
+  } else if (eyes) {
+    rig.chase(dt, eyes.root.rotation.y);
+    rig.update(dt, eyes.root.position, eyes.scale, world.solids, prefs.fov, effects.shake, 0, !!eyesGun);
+  } else if (S.spectating && world.map) {
+    const sp = world.map.spawns; // nobody to watch yet: circle the map
+    orbitCamera({ x: sp.reduce((a, q) => a + q[0], 0) / sp.length, y: 0, z: sp.reduce((a, q) => a + q[2], 0) / sp.length }, now / 1000, 18, 10);
   }
   ropes.update(dt);
 
-  // first-person gun
-  vm.set(self && rig.firstPerson && !orbiting ? gunId : null);
-  vm.update(dt, look, Math.hypot(mover.vel.x, mover.vel.z), mover.grounded, world.darkness);
+  // first-person gun (a spectated player's: bob from their animation)
+  vm.set(eyes && rig.firstPerson && !orbiting ? eyesGun : null);
+  if (self) vm.update(dt, look, Math.hypot(mover.vel.x, mover.vel.z), mover.grounded, world.darkness);
+  else if (eyes) vm.update(dt, look, eyes.anim === 'run' ? 9 : 0, !['jump', 'fall', 'dive'].includes(eyes.anim), world.darkness);
+}
+
+// Spectating: who the camera follows. A player picked by hand (click / Space, ?follow=<name>) or the auto director's
+// pick; switching flies the camera over.
+function spectateTarget(now) {
+  const views = [...S.views.values()].filter((v) => v.placed);
+  if (S.followName) {
+    const v = views.find((o) => o.name.toLowerCase() === S.followName);
+    if (v) [S.follow, S.followName] = [v.id, null];
+  }
+  if (S.follow != null && !S.views.has(S.follow)) S.follow = null; // they left
+  const id = S.follow ?? director.pick(views, now, (v) => fuseOf(v, now));
+  if (id !== S.target) {
+    if (S.target != null) rig.blendFromHere();
+    S.target = id;
+    const v = S.views.get(id);
+    if (v) rig.yaw = v.root.rotation.y + Math.PI; // start behind them
+    rig.snapNext = true;
+  }
+  return S.views.get(S.target) || null;
+}
+
+// click / Space while spectating: the next player, and after the last one back to the auto director
+function nextTarget() {
+  const ids = [...S.views.values()].filter((v) => v.placed).map((v) => v.id);
+  const i = S.follow == null ? -1 : ids.indexOf(S.follow);
+  S.follow = i + 1 < ids.length ? ids[i + 1] : null;
+  S.followName = null;
 }
 
 function updateHud(now, m, gunId) {
@@ -967,9 +1078,10 @@ function updateHud(now, m, gunId) {
   } else ui.setScoreboard(false);
 
   ui.setCrosshair(input.locked && S.phase !== 'results', gunId);
+  if (S.spectating) ui.setSpectating(infoOf(S.target), S.follow == null);
 }
 
-// camera orbit around a point, subject shifted right of center (UI card sits on the left)
+// camera orbit around a point, subject shifted right of center (UI card sits on the left; centered without HUD)
 const orbitDir = new THREE.Vector3();
 function orbitCamera(p, t, radius, height) {
   const a = Math.sin(t * 0.25) * 0.7;
@@ -980,7 +1092,7 @@ function orbitCamera(p, t, radius, height) {
   const dist = Math.max(1.5, Math.min(len, raycastBoxes(world.solids || [], head, orbitDir, len + 0.3) - 0.3));
   camera.position.copy(head).addScaledVector(orbitDir, dist);
   const right = new THREE.Vector3(Math.cos(a), 0, -Math.sin(a));
-  const look = new THREE.Vector3(p.x, p.y + 1.1, p.z).addScaledVector(right, -1.5);
+  const look = new THREE.Vector3(p.x, p.y + 1.1, p.z).addScaledVector(right, NOHUD ? 0 : -1.5);
   camera.lookAt(look);
   if (camera.fov !== prefs.fov) {
     camera.fov = prefs.fov;
@@ -989,11 +1101,13 @@ function orbitCamera(p, t, radius, height) {
 }
 
 // ---------- main loop ----------
-let last = performance.now();
-function frame(now) {
-  requestAnimationFrame(frame);
+// draw = false: simulate only (capture mode seeking)
+let last = clock();
+function frame(now, draw = true) {
+  if (!CAPTURE) requestAnimationFrame(frame);
   const dt = Math.min(0.1, (now - last) / 1000);
   last = now;
+  if (S.replay) pumpReplay(now);
   if (S.screen === 'loading') return;
 
   if (S.screen === 'game') updateGame(dt, now);
@@ -1008,7 +1122,8 @@ function frame(now) {
   effects.resize(renderer.domElement.height, camera);
   effects.update(dt);
   const right = new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld, 0);
-  audio.setListener(camera.position, right);
+  audio.setListener((S.spectating && S.views.get(S.target)?.root.position) || camera.position, right); // spectators hear what their player hears
+  if (!draw) return scene.updateMatrixWorld();
   renderer.render(scene, camera);
   if (S.screen === 'game' && vm.visible) vm.render(renderer);
 }
@@ -1027,7 +1142,9 @@ addEventListener('click', (e) => {
 });
 
 canvas.addEventListener('click', () => {
-  if (S.screen === 'game' && !S.paused) input.requestLock();
+  if (S.screen !== 'game' || S.paused) return;
+  if (S.spectating) nextTarget();
+  else input.requestLock();
 });
 
 addEventListener('keydown', (e) => {
@@ -1041,6 +1158,7 @@ addEventListener('keydown', (e) => {
 ui.initUI({
   create: () => connect(null),
   join: (code) => connect(code),
+  watch: (code) => connect(code, true),
   color: () => S.screen === 'menu' && makePreview(),
   settings: () => {
     audio.setVolume(prefs.volume);
@@ -1060,8 +1178,25 @@ ui.initUI({
 audio.setVolume(prefs.volume);
 
 // ---------- boot ----------
-requestAnimationFrame(frame);
-loadAssets(ui.setLoading).then(() => {
+// Capture mode (tools/clips/capture.mjs): no animation loop; step(dt) advances the game clock by exactly dt seconds
+// and simulates (and with draw, renders) one frame. HUD CSS animations follow the same clock. `sounds` collects
+// every sound played as [time s, name, gain, pan, rate] for the clip's soundtrack.
+const capture = CAPTURE && (window.__capture = { ready: false, sounds: [] });
+if (capture) {
+  audio.setTap({ clock: () => captureNow / 1000, play: (...snd) => capture.sounds.push([captureNow / 1000, ...snd]) });
+  capture.step = (dt, draw = true) => {
+    captureNow += dt * 1000;
+    frame(captureNow, draw);
+    for (const a of document.getAnimations()) {
+      if (a.playState !== 'paused') a.pause(); // started this frame: hold it at its start
+      else a.currentTime += dt * 1000;
+    }
+  };
+} else requestAnimationFrame(frame);
+
+loadAssets(ui.setLoading).then(async () => {
   ui.setLoading(1);
-  setTimeout(() => goMenu(), 250);
+  if (!REPLAY) return setTimeout(() => goMenu(), 250);
+  await startReplay(REPLAY);
+  if (capture) capture.ready = true;
 });

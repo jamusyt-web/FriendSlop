@@ -38,4 +38,8 @@ Steamworks setup, SteamPipe upload scripts (`steam/`) and store page checklist: 
 
 WASD move · mouse look · Space jump (double) · Shift / right click dive · E / left click use item · Tab scores · Esc pause
 
+Spectate a room: type its code and click 👀 instead of Join (click / Space: next player, V: first person).
+
+Marketing clips (recorded bots matches rendered frame by frame to MP4): [tools/clips/README.md](tools/clips/README.md).
+
 See DESIGN.md for rules + protocol. Assets: Kenney (CC0), see client/public/assets/CREDITS.md.

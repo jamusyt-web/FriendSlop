@@ -10,6 +10,7 @@ Keep code simple (YAGNI). Plain JS modules, no TypeScript, no frameworks besides
 shared/   config.js (tunables) maps.js (map data) items.js chaos.js  ← contract, used by both sides
 server/   index.js (http + ws + vite dev middleware), room.js (rooms + game rules)
 client/   index.html, src/*.js, public/assets/ (assets.json manifest, models/, sfx/)
+tools/clips/   record.mjs + capture.mjs: record replays, render them to video (marketing clips, output in marketing/)
 ```
 
 - `npm run dev` → `node server/index.js` on PORT 3000. In dev it mounts Vite in middleware mode (HMR) on the same http server; in production (`NODE_ENV=production`) it serves `dist/` statically. WebSocket lives at path `/ws` (only upgrade requests to `/ws` go to ws; leave others for Vite HMR).
@@ -31,11 +32,19 @@ Phases: `lobby` → `countdown` → `play` → `results` → `lobby`.
   - Every CHAOS_EVERY s (if chaos is on) a random chaos event (shared/chaos.js) is announced; `mods` last CHAOS_DURATION s. Instant ones: swap (shuffle positions), rain (everyone gets a random item, all boxes respawn).
   - Mystery boxes at map `items` spots. Walk into one while empty-handed → random enabled item (by weight). Box respawns after ITEM_RESPAWN s. No items enabled → no boxes.
   - Falling below map.killY or touching a lava box → client respawns itself at a random spawn and sends `fell`. During play: −FALL_PENALTY, and whoever last knocked/froze/slipped/swapped/magneted you within KNOCKOFF_WINDOW s gets +KNOCKOFF_BONUS (a "knockoff").
+- Spectators (join with `spectate`) watch without playing: not in the room's players, never IT, no spawn, and they don't take a player slot (they can watch a full room). They get every broadcast and can be host (map, settings, bots, start). A room whose only humans are spectators still runs bots-only matches; a room is deleted when its last human connection (player or spectator) leaves.
 - Results (RESULTS_TIME s): everyone moved to a spawn (winner on their own) and item effects/leftovers cleared so nobody falls mid-celebration; scoreboard, winner dances, fun awards from per-player stats (most tags, most knockoffs, clumsiest = most falls, most booms). Then back to lobby automatically.
 
 ## Controls
 
 WASD move (camera-relative), mouse look (pointer lock), Space jump (double jump in air), Shift or Right Click dive (forward lunge, MOVE.diveCooldown), E or Left Click use item / shoot, V toggle first/third person (saved in settings), F dance/taunt (anim `dance` while held or for ~2s), Tab scoreboard, Esc pause menu.
+
+Spectating: Click / Space next player (after the last one: back to the auto director), V first/third person, Esc menu.
+
+## Spectating, replays, clips
+
+A spectator's camera follows one player: the third-person chase cam behind them, or through their eyes (with their gun viewmodel) in first person. By default an auto director follows the most interesting player (an IT closing in on someone, a fuse about to blow, whoever was just in a tag / boom / shot / knockoff) and holds each shot ≥ 3 s, flying the camera smoothly to the next one.
+Replays: tools/clips/record.mjs records every message a spectator gets (with ms timestamps); the client plays one back with `?replay=<url>` through the same message handlers, by the game clock instead of a socket (no server needed). View options (any mode): `&follow=auto|<name>`, `&fp=1`, `&nohud=1` (no HUD), `&feed=1` (keep the kill feed with nohud), `&dist=<k>` (third-person camera distance × k). `&capture=1` (tools/clips/capture.mjs): the game clock stops and `window.__capture.step(dt)` advances it by exactly dt and draws one frame, so clips render frame by frame. See tools/clips/README.md.
 
 ## Guns
 
@@ -76,7 +85,7 @@ Chaos mods multiply gravity/speed/friction/accel; `autoBounce` → jump automati
 Client → server:
 | msg | when |
 |---|---|
-| `{t:'join', name, color, code?}` | first message. No/unknown-empty code → create room. color is a hex number |
+| `{t:'join', name, color, code?, spectate?}` | first message. No/unknown-empty code → create room. color is a hex number. `spectate: true` joins as a spectator (no color needed) |
 | `{t:'map', map}` | host, lobby only |
 | `{t:'start'}` | host, lobby only |
 | `{t:'s', p:[x,y,z], ry, a, tp}` | own state at SEND_RATE. `a` = anim: idle/run/jump/fall/dive/slip/dance. `tp` = last teleport seq received (see fx tp) |
@@ -88,9 +97,9 @@ Client → server:
 Server → client:
 | msg | meaning |
 |---|---|
-| `{t:'joined', id, code}` | you joined room `code` as player `id` |
+| `{t:'joined', id, code, spectate?}` | you joined room `code` as player `id` (`spectate: true`: as spectator `id`, which is never in `players`) |
 | `{t:'error', msg}` | e.g. room not found / full; client shows it and returns to menu |
-| `{t:'room', code, host, map, phase, settings:{items,round,chaos}, players:[{id,name,color,bot}]}` | on any lobby/player/settings change. `bot` true for bots. Default settings: all items, ROUND_TIME, chaos true |
+| `{t:'room', code, host, map, phase, settings:{items,round,chaos}, players:[{id,name,color,bot}], spectators:[{id,name}]}` | on any lobby/player/settings change. `bot` true for bots. `host` may be a spectator's id. Default settings: all items, ROUND_TIME, chaos true |
 | `{t:'snap', phase, time, mt, chaos, players:[{id,p,ry,a,it,fuse,fx,score,item,ammo}], boxes:[bool], peels:[{id,p}], projectiles:[{id,p,item}], walls:[{id,min,max}], clouds:[{id,p}]}` | TICK_RATE. `time` = seconds left in phase. `mt` = map time (s). `chaos` = active chaos id or null. `fuse` = that IT's bomb seconds left, else null. `fx` = array of active flags: ghost, shield, frozen, boost, slip, float, giant, dizzy. projectiles = rockets + pearls in flight (item = 'rocket'/'pearl'). walls = active pop-up walls (solid boxes for physics). clouds = active stink clouds. `item` = held item id or null. `ammo` = shots left for guns, else null. `boxes[i]` = map.items[i] box available |
 | `{t:'fx', k, ...}` | to the affected player only. `k:'knock', v:[x,y,z]` add velocity. `k:'freeze', dur` no input. `k:'slip', dur` spin out, no input, keep sliding. `k:'boost', dur, speed`. `k:'float', dur`. `k:'dizzy', dur`. `k:'tp', p:[x,y,z], seq` set position + zero velocity, then echo `seq` as `tp` in state msgs (server ignores older state until echoed) |
 | `{t:'ev', k, ...}` | to everyone, for juice/announcements/sfx. `k:'tag', a, b` (a tagged b) · `k:'boom', id` · `k:'chaos', id` · `k:'pickup', id, item` · `k:'use', id, item, p` · `k:'slip', id` · `k:'pop', id` (shield popped) · `k:'countdown', n` · `k:'go'` · `k:'shot', id, item, from:[x,y,z], to:[x,y,z], hit:id\|null` (every gun shot; for rockets `to` is null, rocket appears in snaps) · `k:'blast', p, id` (rocket exploded at p, id = shooter) · `k:'warp', id, p` (pearl teleport) · `k:'fell', id, by` (by = knockoff credit id or null; sent in lobby too, no scoring there) · `k:'bonk', a, b` (giant a knocked b) |

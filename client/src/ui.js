@@ -72,7 +72,7 @@ export function initUI(handlers) {
   // create / join
   const code = $('code-input');
   const validCode = () => /^[A-Z]{4}$/.test(code.value);
-  const syncJoin = () => ($('btn-join').disabled = !validCode());
+  const syncJoin = () => ($('btn-join').disabled = $('btn-watch').disabled = !validCode());
   code.addEventListener('input', () => {
     code.value = code.value.toUpperCase().replace(/[^A-Z]/g, '').slice(0, 4);
     syncJoin();
@@ -83,6 +83,7 @@ export function initUI(handlers) {
   syncJoin();
   $('btn-create').onclick = () => on.create();
   $('btn-join').onclick = () => validCode() && on.join(code.value);
+  $('btn-watch').onclick = () => validCode() && on.watch(code.value);
   $('btn-cancel-connect').onclick = () => on.leave();
 
   // settings
@@ -241,12 +242,18 @@ export function updateLobby(room, myId) {
       (p) => `<li><span class="dot" style="background:${hex(p.color)}"></span><span class="nm">${esc(p.name)}</span>` +
         `${p.id === myId ? '<span class="you">you</span>' : ''}${p.bot ? '<span title="Bot">🤖</span>' : ''}${p.id === room.host ? '<span title="Host">👑</span>' : ''}</li>`,
     )
+    .join('') + (room.spectators || [])
+    .map(
+      (p) => `<li class="spectator"><span title="Spectating">👀</span><span class="nm">${esc(p.name)}</span>` +
+        `${p.id === myId ? '<span class="you">you</span>' : ''}${p.id === room.host ? '<span title="Host">👑</span>' : ''}</li>`,
+    )
     .join('');
   $('map-list').querySelectorAll('.map-card').forEach((b) => {
     b.classList.toggle('selected', b.dataset.map === room.map);
     b.disabled = !isHost;
   });
   $('btn-start').classList.toggle('hidden', !isHost);
+  $('btn-start').disabled = !room.players.length; // a spectating host needs someone to play (bots count)
   $('bot-row').classList.toggle('hidden', !isHost);
   $('btn-bot-add').disabled = room.players.length >= MAX_PLAYERS;
   $('btn-bot-del').disabled = !room.players.some((p) => p.bot);
@@ -410,8 +417,7 @@ export function feed(html, mine = false) {
   el.innerHTML = html;
   box.prepend(el);
   while (box.children.length > 6) box.lastChild.remove();
-  setTimeout(() => el.classList.add('fade'), 5000);
-  setTimeout(() => el.remove(), 5600);
+  el.addEventListener('animationend', (e) => e.animationName === 'feedout' && el.remove()); // fades out after 5 s (CSS)
 }
 
 export function bigText(html, cls = '') {
@@ -432,6 +438,17 @@ export function chaosBadge(name, remaining, frac) {
   el.querySelector('.chaos-name').textContent = '🌀 ' + name;
   el.querySelector('.chaos-time').textContent = remaining > 0 ? Math.ceil(remaining) + 's' : '';
   el.querySelector('.chaos-bar i').style.width = Math.max(0, Math.min(1, frac)) * 100 + '%';
+}
+
+// spectating: who the camera follows (p: room player info or null), auto: picked by the auto director
+let lastSpectate = null;
+export function setSpectating(p, auto) {
+  const key = p ? p.id + p.name + auto : null;
+  if (key === lastSpectate) return;
+  lastSpectate = key;
+  const el = $('spectate');
+  el.classList.toggle('hidden', !p);
+  if (p) el.innerHTML = `👀 SPECTATING ${nameHtml(p)}<small>${auto ? '🎬 auto · ' : ''}click / space: next player</small>`;
 }
 
 export function setLockHint(v) {
